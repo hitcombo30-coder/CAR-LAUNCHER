@@ -670,6 +670,8 @@ function navTick(){
 }
 
 /* ---------- media: Now Playing from other apps + in-app net radio ---------- */
+/* one-time reset of the saved station from the older version, so the Malaysian list shows first */
+if(!store.get('mig4',false)){store.set('lastSt',null);store.set('mig4',true)}
 const media={playing:false,radio:{list:[],i:0}};
 {const ls=store.get('lastSt',null);if(ls&&ls.url_resolved)media.radio.list=[ls]}
 let pref=store.get('pref','radio'),ext=null,access=null,extKey='',extArt='',extWasPlaying=false,msKey='';
@@ -720,20 +722,22 @@ if('mediaSession' in navigator){
 /* net radio (radio-browser.info) */
 const RB=['https://de1.api.radio-browser.info','https://nl1.api.radio-browser.info','https://at1.api.radio-browser.info'];
 async function rb(path){for(const b of RB){try{const r=await fetchT(b+path,7000);if(r.ok)return await r.json()}catch(e){}}throw new Error('radio')}
-function cc(){return TZ==='Asia/Kuala_Lumpur'?'MY':(navigator.language.split('-')[1]||'MY').toUpperCase()}
+function cc(){return 'MY'}
 const radioSub=s=>(s.tags||'').split(',').filter(Boolean).slice(0,2).join(' · ')||s.country||'Live radio';
 async function loadStations(q){
  try{
-  const p=q?`/json/stations/search?name=${encodeURIComponent(q)}&limit=60&hidebroken=true&order=clickcount&reverse=true`:`/json/stations/search?countrycode=${cc()}&limit=60&hidebroken=true&order=clickcount&reverse=true`;
-  const l=(await rb(p)).filter(s=>(s.url_resolved||'').startsWith('https://')&&!s.hls);
-  if(!q){const ls=store.get('lastSt',null);if(ls&&ls.url_resolved){const k=l.findIndex(x=>x.stationuuid&&x.stationuuid===ls.stationuuid);if(k>=0)l.unshift(l.splice(k,1)[0]);else l.unshift(ls)}}
+  const p=q?`/json/stations/search?name=${encodeURIComponent(q)}&countrycode=MY&limit=80&hidebroken=true&order=clickcount&reverse=true`:`/json/stations/search?countrycode=${cc()}&limit=80&hidebroken=true&order=clickcount&reverse=true`;
+  const l=(await rb(p)).filter(s=>/^https?:\/\//.test(s.url_resolved||'')&&!s.hls&&(s.countrycode||'MY')==='MY'&&/mp3|aac|ogg|mpeg|^$/i.test(s.codec||''));
+  if(!q){const ls=store.get('lastSt',null);if(ls&&ls.url_resolved&&ls.countrycode==='MY'){const k=l.findIndex(x=>x.stationuuid&&x.stationuuid===ls.stationuuid);if(k>=0)l.unshift(l.splice(k,1)[0]);else l.unshift(ls)}}
   media.radio.list=l;media.radio.i=0;
-  if(!l.length)toast('No HTTPS stations found');
+  if(!l.length)toast('No stations found');
   renderMusic();renderDrawer();return l;
  }catch(e){toast('Could not load radio stations');return[]}
 }
-function playStation(i){
+function playStation(i,auto){
  const l=media.radio.list;if(!l.length)return;
+ if(auto&&Date.now()-store.get('fmOn',0)<43200000)return; /* FM was opened: never autoplay net radio over it */
+ if(!auto)store.set('fmOn',0);
  if(ext&&ext.playing)cmd('pause');
  pref='radio';store.set('pref','radio');
  media.radio.i=(i+l.length)%l.length;
@@ -807,7 +811,8 @@ const isFm=a=>/radio|\bfm\b|tuner/i.test(a.n)||/radio|\.fm|fmradio|tuner/i.test(
 function openFm(){
  if(!window.NoorNative){toast('FM works only inside the Android app');return}
  const p=store.get('fmPkg',null);
- if(p&&getAllApps().some(a=>a.p===p)){audio.pause();openApp(p);return}
+ store.set('fmOn',Date.now());
+ if(p){audio.pause();openApp(p);return}
  openDrawer('fm');
 }
 (function(){
@@ -850,8 +855,20 @@ const AI={
  phone:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>',
  msg:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
  gear:'<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'};
-let allApps=null;
-function getAllApps(){if(allApps)return allApps;try{if(window.NoorNative&&NoorNative.listApps)allApps=JSON.parse(NoorNative.listApps())}catch(e){}return allApps||[]}
+/* app list is built by Android on a background thread, so tapping APPS never freezes the screen */
+let allApps=null,appsReq=false,tileTok=0;
+window.__appsDone=j=>{try{allApps=JSON.parse(j)}catch(e){allApps=[]}if(dMode==='apps'||dMode==='fm')renderDrawer()};
+function getAllApps(){
+ if(allApps)return allApps;
+ if(!appsReq&&window.NoorNative&&NoorNative.requestApps){appsReq=true;NoorNative.requestApps()}
+ return [];
+}
+/* draws long lists a few items at a time so the weak CPU never stalls */
+function fillTiles(L,items,html){
+ const tok=++tileTok;L.innerHTML='';let i=0;
+ const step=()=>{if(tok!==tileTok)return;L.insertAdjacentHTML('beforeend',items.slice(i,i+12).map(html).join(''));i+=12;if(i<items.length)setTimeout(step,16)};
+ step();
+}
 let dMode=null;
 function openDrawer(m){dMode=m;$('drawer').classList.add('open');renderDrawer();if(m==='radio'&&media.radio.list.length<2)loadStations()}
 function closeDrawer(){dMode=null;$('drawer').classList.remove('open');$('dq').blur()}
@@ -860,21 +877,25 @@ $('btnApps').onclick=()=>openDrawer('apps');
 const appTile=a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="data:image/png;base64,${a.i}" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`;
 function renderDrawer(){
  if(!dMode)return;
+ tileTok++;
  const L=$('dlist'),tools=$('dtools');
  if(dMode==='fm'){
   const all=getAllApps(),m=all.filter(isFm),list=m.length?m:all;
   $('dtitle').textContent=m.length?'Choose your FM radio app':'FM app not detected. Pick it here';
   tools.style.display='none';L.className='grid';
-  L.innerHTML=list.map(appTile).join('')||'<div class="empty">No apps found. FM works only inside the Android app.</div>';
+  if(allApps===null&&window.NoorNative){L.className='';L.innerHTML='<div class="empty">Loading apps…</div>';return}
+  if(!list.length){L.className='';L.innerHTML='<div class="empty">No apps found. FM works only inside the Android app.</div>';return}
+  fillTiles(L,list,appTile);
   return;
  }
  if(dMode==='apps'){
   $('dtitle').textContent='Apps';tools.style.display='none';L.className='grid';
   const all=getAllApps();
+  if(allApps===null&&window.NoorNative){L.className='';L.innerHTML='<div class="empty">Loading apps…</div>';return}
   if(all.length){
    const fav=APPS.map(a=>a[1]);
    const sorted=all.slice().sort((x,y)=>{const a=fav.indexOf(x.p),b=fav.indexOf(y.p);return(a<0?999:a)-(b<0?999:b)});
-   L.innerHTML=sorted.map(appTile).join('');
+   fillTiles(L,sorted,appTile);
   }else{
    L.innerHTML=APPS.map(a=>`<button class="tile glassbtn" data-pkg="${esc(a[1])}"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${AI[a[2]]}</svg><span>${esc(a[0])}</span></button>`).join('');
   }
@@ -898,7 +919,8 @@ function renderDrawer(){
  tools.style.display='flex';L.className='';
  $('dtitle').textContent='Net radio';$('dq').placeholder='Search stations (e.g. Hijrah, Nasyid, BFM)';$('dgo').textContent='Search';
  const l=media.radio.list;
- L.innerHTML=l.length?l.map((s,i)=>`<button class="row glassbtn${i===media.radio.i?' on':''}" data-st="${i}"><span class="a">${esc(s.name)}</span><span class="b">${esc(radioSub(s))}</span></button>`).join(''):'<div class="empty">Loading stations…</div>';
+ if(l.length){fillTiles(L,l.map((s,i)=>({s,i})),o=>`<button class="row glassbtn${o.i===media.radio.i?' on':''}" data-st="${o.i}"><span class="a">${esc(o.s.name)}</span><span class="b">${esc(radioSub(o.s))}</span></button>`)}
+ else L.innerHTML='<div class="empty">Loading stations…</div>';
 }
 $('dlist').addEventListener('click',e=>{
  const t=e.target.closest('button');if(!t)return;
@@ -948,8 +970,9 @@ initMap();tick();idleCard();showStats();showSpeed(0);
 {const p0=store.get('pr',null);if(p0&&p0.zone&&p0.day===new Date().toDateString()&&Array.isArray(p0.t)){prayers=p0.t.map(([n,h,m])=>{const x=new Date();x.setHours(h,m,0,0);return{n,x}});prayerDay=p0.day;prayerZone=p0.zone;hijriStr=p0.hijri||'';zoneToast=p0.zone;updatePrayerText();applyNight();tick()}}
 renderMusic();poll();netPoll();setInterval(poll,1500);setInterval(netPoll,5000);
 setTimeout(()=>{if(media.radio.list.length<2)loadStations()},4000);
+setTimeout(getAllApps,3000);
 if(store.get('lastpos',null)&&!new URLSearchParams(location.search).has('demo'))bootData();
-if(window.NoorNative&&store.get('auto',true))setTimeout(()=>{if(ext&&ext.playing)return;if(media.radio.list.length)playStation(0)},2500);
+if(window.NoorNative&&store.get('auto',true))setTimeout(()=>{if(ext&&ext.playing)return;if(media.radio.list.length)playStation(0,true)},2500);
 if(new URLSearchParams(location.search).has('demo')){
  /* ?demo=1 simulates driving, handy for previewing on a computer */
  let a=0,lat=pos.lat,lon=pos.lon,h=45;
