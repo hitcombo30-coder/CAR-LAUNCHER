@@ -34,7 +34,7 @@ svg{display:block}
 .dark{background:linear-gradient(160deg,rgba(8,34,27,.88),rgba(8,34,27,.65))}
 
 /* clock */
-#p-clock{height:214px;padding:16px 22px 14px;display:flex;flex-direction:column;justify-content:space-between}
+#p-clock{position:relative;height:214px;padding:16px 22px 14px;display:flex;flex-direction:column;justify-content:space-between}
 #time{font-size:92px;line-height:92px;font-weight:600;letter-spacing:-2px;color:#FFF6D8}
 #date{margin-top:6px;font-size:19px;font-weight:500}
 #hijri{font-size:16px;font-weight:500;color:#E9C877}
@@ -45,6 +45,10 @@ svg{display:block}
 #prayer{font-size:17px;font-weight:500}
 #prayer b{color:#E9C877;font-weight:700}
 #prayer .m{color:#BFD6CB;font-size:15px}
+#net{position:absolute;left:252px;top:20px;width:104px;display:flex;flex-direction:column;align-items:center;gap:3px;color:#E9C877;font-size:13px;font-weight:600;line-height:15px;text-align:center}
+#net.bad{color:#F2A35E}
+#net.off{color:#9DBFB2}
+.hint{color:#F6DF9B;text-decoration:underline}
 .bism{font-family:Amiri,serif;font-size:30px;line-height:34px;color:#E9C877}
 
 /* speed */
@@ -153,6 +157,7 @@ svg{display:block}
 
 <!-- CLOCK / WEATHER / PRAYER -->
 <section class="glass" id="p-clock">
+<div id="net" aria-label="Network status"><svg id="netIcon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg><span id="netTxt">&nbsp;</span></div>
 <div style="display:flex;justify-content:space-between;align-items:center">
 <div style="display:flex;flex-direction:column">
 <div id="time">--:--</div>
@@ -203,7 +208,6 @@ svg{display:block}
 <svg class="star" width="200" height="200" viewBox="0 0 200 200" aria-hidden="true"><g fill="none" stroke="#E9C877" stroke-opacity=".55" stroke-width="1.2"><rect x="45" y="45" width="110" height="110"/><rect x="45" y="45" width="110" height="110" transform="rotate(45 100 100)"/><circle cx="100" cy="100" r="76"/><circle cx="100" cy="100" r="54"/></g></svg>
 <div id="artar" lang="ar">الله</div>
 <img id="artimg" alt="">
-<div id="ytbox"><div id="ytp"></div></div>
 </div>
 <div id="minfo">
 <div id="srcs">
@@ -302,17 +306,20 @@ let toastT=0;
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),3200)}
 
 /* ---------- clock ---------- */
+const HIJRI_M=['Muharram','Safar','Rabiul Awal','Rabiul Akhir','Jamadil Awal','Jamadil Akhir','Rejab','Syaaban','Ramadan','Syawal','Zulkaedah','Zulhijjah'];
 function tick(){
  const d=new Date();
  $('time').textContent=hm(d);
  $('date').textContent=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
- try{
-  const HM=['Muharram','Safar','Rabi al-Awwal','Rabi al-Thani','Jumada al-Awwal','Jumada al-Thani','Rajab','Shaban','Ramadan','Shawwal','Dhu al-Qidah','Dhu al-Hijjah'];
+ let hs='';
+ if(hijriStr&&prayerDay===d.toDateString()){const m=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(hijriStr);if(m&&+m[2]>=1&&+m[2]<=12)hs=(+m[3])+' '+HIJRI_M[+m[2]-1]+' '+m[1]+'H'}
+ if(!hs){try{
   const pr=new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{day:'numeric',month:'numeric',year:'numeric'}).formatToParts(d);
   const g=t=>{const x=pr.find(p=>p.type===t);return x?parseInt(x.value,10):NaN};
   const dd=g('day'),mm=g('month'),yy=g('year');
-  if(dd&&mm>=1&&mm<=12&&yy>1300)$('hijri').textContent=dd+' '+HM[mm-1]+' '+yy+' AH';
- }catch(e){}
+  if(dd&&mm>=1&&mm<=12&&yy>1300)hs=dd+' '+HIJRI_M[mm-1]+' '+yy+'H';
+ }catch(e){}}
+ if(hs)$('hijri').textContent=hs;
  updatePrayerText();
  applyNight();
 }
@@ -347,20 +354,78 @@ async function loadWeather(){
 }
 setInterval(()=>{if(hasFix)loadWeather()},15*60*1000);
 
-/* ---------- prayer times (Aladhan) ---------- */
-let prayers=null,prayerDay='',pBusy=false,pLast=0;
+/* ---------- prayer times: official JAKIM e-Solat zone nearest to your GPS position ---------- */
+let prayers=null,prayerDay='',pBusy=false,pLast=0,hijriStr='',prayerZone='',prayerPos=null,zoneToast='';
+const PNAMES=['Subuh','Zohor','Asar','Maghrib','Isyak'];
+const ZN={JHR01:'Pulau Aur, Pemanggil',JHR02:'Johor Bahru, Kota Tinggi, Mersing',JHR03:'Kluang, Pontian',JHR04:'Batu Pahat, Muar, Segamat',
+KDH01:'Kota Setar, Kubang Pasu, Pokok Sena',KDH02:'Kuala Muda, Yan, Pendang',KDH03:'Padang Terap, Sik',KDH04:'Baling',KDH05:'Kulim, Bandar Baharu',KDH06:'Langkawi',KDH07:'Gunung Jerai',
+KTN01:'Kota Bharu, Pasir Mas, Tumpat, Kuala Krai',KTN03:'Gua Musang, Jeli',MLK01:'Melaka',NGS01:'Tampin, Jempol',NGS02:'Seremban, Port Dickson, Kuala Pilah, Jelebu, Rembau',
+PHG01:'Pulau Tioman',PHG02:'Kuantan, Pekan, Rompin, Muadzam Shah',PHG03:'Temerloh, Jerantut, Maran, Bera, Jengka',PHG04:'Bentong, Raub, Lipis',PHG05:'Genting Sempah, Janda Baik, Bukit Tinggi',PHG06:'Cameron Highlands, Genting Highlands, Bukit Fraser',
+PLS01:'Kangar, Padang Besar, Arau',PNG01:'Pulau Pinang',PRK01:'Tapah, Slim River, Tanjung Malim',PRK02:'Ipoh, Kuala Kangsar, Batu Gajah, Kampar',PRK03:'Grik, Lenggong, Pengkalan Hulu',PRK04:'Temengor, Belum',PRK05:'Teluk Intan, Sitiawan, Lumut, Bagan Datuk',PRK06:'Taiping, Selama, Parit Buntar',PRK07:'Bukit Larut',
+SGR01:'Shah Alam, Petaling, Gombak, Hulu Langat, Sepang',SGR02:'Kuala Selangor, Sabak Bernam',SGR03:'Klang, Kuala Langat',
+TRG01:'Kuala Terengganu, Marang',TRG02:'Besut, Setiu',TRG03:'Hulu Terengganu',TRG04:'Dungun, Kemaman',WLY01:'Kuala Lumpur, Putrajaya'};
+/* one or more reference towns per zone: [zone, lat, lon]. Sabah/Sarawak fall back to coordinate-based times. */
+const ZP=[['JHR01',2.45,104.52],['JHR02',1.49,103.74],['JHR02',1.73,103.9],['JHR02',2.43,103.84],['JHR03',2.03,103.32],['JHR03',1.49,103.39],['JHR04',1.85,102.93],['JHR04',2.04,102.57],['JHR04',2.51,102.82],['JHR04',2.58,102.61],
+['KDH01',6.12,100.37],['KDH01',6.27,100.42],['KDH02',5.65,100.49],['KDH02',5.8,100.37],['KDH02',5.99,100.5],['KDH03',5.82,100.74],['KDH03',6.25,100.61],['KDH04',5.68,100.92],['KDH05',5.37,100.56],['KDH05',5.13,100.5],['KDH06',6.35,99.8],['KDH07',5.79,100.43],
+['KTN01',6.13,102.24],['KTN01',5.83,102.4],['KTN01',5.8,102.15],['KTN01',5.53,102.2],['KTN03',4.88,101.97],['KTN03',5.7,101.84],['MLK01',2.19,102.25],
+['NGS01',2.47,102.23],['NGS01',2.82,102.4],['NGS02',2.72,101.94],['NGS02',2.74,102.25],['NGS02',2.52,101.8],['NGS02',3.06,102.0],['NGS02',2.59,102.09],
+['PHG01',2.82,104.17],['PHG02',3.81,103.33],['PHG02',3.49,103.42],['PHG02',2.71,103.49],['PHG02',3.05,103.08],['PHG03',3.45,102.42],['PHG03',3.94,102.36],['PHG03',3.58,102.77],['PHG03',3.2,102.5],['PHG03',3.53,102.55],['PHG03',3.7,102.55],
+['PHG04',3.52,101.91],['PHG04',3.79,101.86],['PHG04',4.18,101.94],['PHG05',3.37,101.77],['PHG05',3.33,101.86],['PHG05',3.35,101.83],['PHG06',4.47,101.38],['PHG06',3.42,101.79],['PHG06',3.71,101.74],
+['PLS01',6.44,100.2],['PNG01',5.41,100.33],['PRK01',4.2,101.26],['PRK01',3.68,101.52],['PRK01',3.83,101.4],['PRK02',4.6,101.08],['PRK02',4.77,100.94],['PRK02',4.47,101.04],['PRK02',4.31,101.15],
+['PRK03',5.43,101.13],['PRK03',5.1,100.98],['PRK03',5.9,101.0],['PRK04',5.6,101.4],['PRK05',4.02,101.02],['PRK05',4.22,100.7],['PRK05',4.23,100.63],['PRK05',3.99,100.78],
+['PRK06',4.85,100.74],['PRK06',5.12,100.49],['PRK06',5.2,100.7],['PRK06',5.0,100.54],['PRK07',4.86,100.8],
+['SGR01',3.07,101.52],['SGR01',3.25,101.68],['SGR01',2.99,101.79],['SGR01',2.69,101.75],['SGR01',3.56,101.65],['SGR01',3.32,101.57],['SGR02',3.34,101.25],['SGR02',3.77,100.99],['SGR03',3.04,101.45],['SGR03',2.82,101.5],
+['TRG01',5.33,103.14],['TRG01',5.2,103.2],['TRG02',5.8,102.55],['TRG02',5.52,102.72],['TRG03',5.07,103.0],['TRG04',4.76,103.42],['TRG04',4.23,103.42],['WLY01',3.14,101.69],['WLY01',2.93,101.69]];
+function nearestZone(p){let best=null,bd=1e12;for(const z of ZP){const d=hav(p.lat,p.lon,z[1],z[2]);if(d<bd){bd=d;best=z[0]}}return bd<120000?best:null}
+
+/* fetch helpers: natFetch goes through the Android app (no browser CORS limits), fetchT is a plain fetch with a timeout */
+const natCb={};let natN=0;
+window.__natDone=(id,ok,txt)=>{const f=natCb[id];delete natCb[id];if(f)f(ok,txt)};
+function natFetch(url){return new Promise((res,rej)=>{
+ if(!(window.NoorNative&&NoorNative.fetchNative)){rej(new Error('nonative'));return}
+ const id='n'+(++natN);const t=setTimeout(()=>{delete natCb[id];rej(new Error('timeout'))},15000);
+ natCb[id]=(ok,txt)=>{clearTimeout(t);ok?res(txt):rej(new Error(txt))};
+ NoorNative.fetchNative(id,url)})}
+async function fetchT(u,ms,o){const c=new AbortController();const t=setTimeout(()=>c.abort(),ms||8000);try{return await fetch(u,Object.assign({signal:c.signal},o||{}))}finally{clearTimeout(t)}}
+
 async function loadPrayer(){
  if(pBusy||Date.now()-pLast<60000)return;
  pBusy=true;pLast=Date.now();
- const d=new Date(),method=TZ==='Asia/Kuala_Lumpur'?17:3;
- try{
-  const j=await(await fetch(`https://api.aladhan.com/v1/timings/${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}?latitude=${pos.lat}&longitude=${pos.lon}&method=${method}`)).json();
-  const t=j.data.timings;
-  prayers=['Fajr','Dhuhr','Asr','Maghrib','Isha'].map(n=>{const [h,m]=t[n].slice(0,5).split(':').map(Number);const x=new Date(d);x.setHours(h,m,0,0);return{n,x}});
-  prayerDay=d.toDateString();
-  store.set('pr',{day:prayerDay,t:prayers.map(p=>[p.n,p.x.getHours(),p.x.getMinutes()])});
- }catch(e){}
- pBusy=false;updatePrayerText();
+ const d=new Date(),zone=store.get('zone',null)||nearestZone(pos);
+ const KEYS=['Fajr','Dhuhr','Asr','Maghrib','Isha'];
+ const mk=get=>KEYS.map((k,i)=>{const m=/(\d{1,2}):(\d{2})/.exec(get(k));const x=new Date(d);x.setHours(+m[1],+m[2],0,0);return{n:PNAMES[i],x}});
+ let ok=false;
+ if(zone){
+  try{
+   const u='https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=today&zone='+zone;
+   let txt;
+   try{txt=await natFetch(u)}catch(e){txt=await(await fetchT(u,8000)).text()}
+   const e0=JSON.parse(txt).prayerTime[0];
+   prayers=mk(k=>e0[k.toLowerCase()]);
+   hijriStr=e0.hijri||'';prayerZone=zone;ok=true;
+  }catch(e){}
+ }
+ if(!ok){
+  try{
+   const method=TZ==='Asia/Kuala_Lumpur'?17:3;
+   const j=await(await fetchT(`https://api.aladhan.com/v1/timings/${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}?latitude=${pos.lat}&longitude=${pos.lon}&method=${method}`,8000)).json();
+   const t=j.data.timings;
+   prayers=mk(k=>t[k]);hijriStr='';prayerZone='';ok=true;
+  }catch(e){}
+ }
+ if(ok){
+  prayerDay=d.toDateString();prayerPos={lat:pos.lat,lon:pos.lon};
+  store.set('pr',{day:prayerDay,zone:prayerZone,hijri:hijriStr,t:prayers.map(p=>[p.n,p.x.getHours(),p.x.getMinutes()])});
+  if(prayerZone&&zoneToast!==prayerZone){zoneToast=prayerZone;toast('Prayer times: JAKIM zone '+prayerZone+' ('+(ZN[prayerZone]||'')+'). Hold the prayer line to change.')}
+ }
+ pBusy=false;updatePrayerText();tick();
+}
+/* keeps prayer times following you when you drive into another zone */
+function followPrayer(){
+ if(!prayers||store.get('zone',null))return;
+ const z=nearestZone(pos);
+ const moved=prayerPos?hav(prayerPos.lat,prayerPos.lon,pos.lat,pos.lon):0;
+ if((z&&z!==prayerZone)||(!z&&prayerZone)||(!z&&moved>30000)){pLast=0;loadPrayer()}
 }
 function updatePrayerText(){
  const el=$('prayer');
@@ -368,7 +433,7 @@ function updatePrayerText(){
  const now=new Date();
  if(now.toDateString()!==prayerDay){loadPrayer();}
  let nx=prayers.find(p=>p.x>now);
- if(!nx)nx={n:'Fajr',x:new Date(prayers[0].x.getTime()+864e5)};
+ if(!nx)nx={n:PNAMES[0],x:new Date(prayers[0].x.getTime()+864e5)};
  const mins=Math.max(0,Math.round((nx.x-now)/60000)),h=Math.floor(mins/60),m=mins%60;
  el.innerHTML=`${esc(nx.n)} <b>${hm(nx.x)}</b> <span class="m">· in ${h?h+'h ':''}${m}m</span>`;
 }
@@ -402,7 +467,7 @@ function onPos(p){
  if(c.heading!=null&&!isNaN(c.heading)&&kmh>5)hdg=c.heading;
  lastP={lat,lon,t};
  const first=!hasFix;pos={lat,lon};hasFix=true;
- if(t-lastSave>10000){lastSave=t;store.set('lastpos',{lat,lon})}
+ if(t-lastSave>10000){lastSave=t;store.set('lastpos',{lat,lon});followPrayer()}
  showSpeed(kmh);showStats();moveCar();
  if(first){const far=bootPos&&hav(bootPos.lat,bootPos.lon,lat,lon)>15000;if(!booted||far){booted=false;bootData()}else geoName(true);idleCard()}else geoName(false);
  navTick();
@@ -456,7 +521,7 @@ function applyRot(force){
  let tr='rotate(0deg)';
  if(on){
   const d=((hdg-rotA+540)%360)-180;
-  if(!force&&Math.abs(d)<3)return;
+  if(!force&&Math.abs(d)<5)return;
   rotA+=d;tr='rotate('+(-rotA)+'deg)';
  }else rotA=hdg;
  const instant=force||!on;
@@ -604,61 +669,145 @@ function navTick(){
  }
 }
 
-/* ---------- media ---------- */
-const media={src:store.get('src','radio'),playing:false,radio:{list:[],i:0},cur:null};
-let lib=store.get('lib',[]);
+/* ---------- media: Now Playing from other apps + in-app net radio ---------- */
+const media={playing:false,radio:{list:[],i:0}};
 {const ls=store.get('lastSt',null);if(ls&&ls.url_resolved)media.radio.list=[ls]}
+let pref=store.get('pref','radio'),ext=null,access=null,extKey='',extArt='',extWasPlaying=false,msKey='';
 const audio=new Audio();audio.preload='none';
 let fails=0;
 audio.onplaying=()=>{fails=0;setPlaying(true)};
 audio.onpause=()=>setPlaying(false);
-audio.onerror=()=>{if(media.src!=='radio'||!audio.src)return;if(++fails<=4){toast('Stream unavailable, trying next…');setTimeout(()=>step(1),700)}else{toast('Stations are not responding');fails=0}};
-
+audio.onerror=()=>{if(!audio.getAttribute('src'))return;if(++fails<=4){toast('Stream unavailable, trying next…');setTimeout(()=>playStation(media.radio.i+1),700)}else{toast('Stations are not responding');fails=0}};
 const PLAY='<polygon points="7 4 20 12 7 20 7 4"/>',PAUSE='<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
-function setPlaying(b){
- media.playing=b;$('playIcon').innerHTML=b?PAUSE:PLAY;
- if('mediaSession' in navigator)navigator.mediaSession.playbackState=b?'playing':'paused';
-}
-function setMeta(t,s,art){
- $('title').textContent=t;$('sub').textContent=s;
+const GAPP={'com.google.android.youtube':'yt','com.google.android.apps.youtube.music':'ytm'};
+function view(){return(pref==='ext'&&ext)?'ext':'radio'}
+function setPlaying(b){media.playing=b;if('mediaSession' in navigator)navigator.mediaSession.playbackState=b?'playing':'paused';renderMusic()}
+function setIcon(b){$('playIcon').innerHTML=b?PAUSE:PLAY}
+function showArt(u,k){
  const im=$('artimg');
- if(art&&art.startsWith('https://')){im.onerror=()=>{im.style.display='none'};im.onload=()=>{im.style.display='block'};im.src=art}else{im.style.display='none'}
- if('mediaSession' in navigator&&window.MediaMetadata)navigator.mediaSession.metadata=new MediaMetadata({title:t,artist:s});
+ if(!u){im.removeAttribute('data-k');im.style.display='none';return}
+ if(im.dataset.k===k)return;
+ im.dataset.k=k;im.onerror=()=>{im.style.display='none'};im.onload=()=>{im.style.display='block'};im.src=u;
 }
-if('mediaSession' in navigator){
- const ms=navigator.mediaSession;
- const set=(a,f)=>{try{ms.setActionHandler(a,f)}catch(e){}};
- set('play',playPause);set('pause',playPause);set('nexttrack',()=>step(1));set('previoustrack',()=>step(-1));
-}
-const NAMES={yt:'YouTube',ytm:'YouTube Music',radio:'Radio'};
-function setSource(s,keep){
- if(!keep){audio.pause();if(yt&&ytReady&&ytLoaded)try{yt.pauseVideo()}catch(e){}}
- media.src=s;store.set('src',s);
- document.querySelectorAll('.src').forEach(b=>b.classList.toggle('on',b.dataset.src===s));
- const isYT=s!=='radio';
- $('ytbox').style.display=isYT?'block':'none';
- $('artar').style.display=isYT?'none':'flex';
- setPlaying(false);
- if(isYT){
-  $('barfill').style.width='0';$('tc').textContent='0:00';$('td').textContent='0:00';
-  if(!media.cur||media.cur.s!==s)media.cur=store.get('last_'+s,null);
-  const c0=media.cur;
-  setMeta(c0?(c0.t||'Tap play to resume'):'Tap to add a link',NAMES[s]);
-  loadYTApi();
+function renderMusic(){
+ const v=view(),sub=$('sub');
+ document.querySelectorAll('.src').forEach(b=>{const s=b.dataset.src;b.classList.toggle('on',s==='radio'?v==='radio':(v==='ext'&&GAPP[ext.pkg]===s))});
+ sub.classList.remove('hint');
+ if(v==='ext'){
+  $('title').textContent=ext.title||ext.app;
+  sub.textContent=[ext.artist,ext.album].filter(Boolean).join(' · ')||ext.app;
+  setIcon(ext.playing);
+  if(ext.dur>0){$('barfill').style.width=Math.min(ext.pos/ext.dur,1)*100+'%';$('tc').textContent=mmss(ext.pos/1000);$('td').textContent=mmss(ext.dur/1000)}
+  else{$('barfill').style.width='100%';$('tc').textContent='LIVE';$('td').textContent=''}
+  showArt(extArt?'data:image/jpeg;base64,'+extArt:'','e'+extKey);
  }else{
-  $('barfill').style.width='100%';$('tc').textContent='LIVE';$('td').textContent='';
   const c=media.radio.list[media.radio.i];
-  if(c)setMeta(c.name,radioSub(c),c.favicon);else setMeta('Tap to pick a station','Radio');
-  if(media.radio.list.length<2)loadStations();
+  $('title').textContent=c?c.name:'Tap to pick a station';
+  if(window.NoorNative&&access===false&&!media.playing){sub.textContent='Tap here to show what YouTube is playing';sub.classList.add('hint')}
+  else sub.textContent=c?radioSub(c):'Net radio';
+  setIcon(media.playing);
+  $('barfill').style.width='100%';$('tc').textContent='LIVE';$('td').textContent='';
+  showArt(c&&c.favicon&&c.favicon.startsWith('https://')?c.favicon:'','r'+(c?(c.stationuuid||c.url_resolved):''));
+  const k='r'+(c?c.name:'');
+  if(c&&k!==msKey&&'mediaSession' in navigator&&window.MediaMetadata){msKey=k;try{navigator.mediaSession.metadata=new MediaMetadata({title:c.name,artist:radioSub(c)})}catch(e){}}
  }
 }
-document.querySelectorAll('.src:not([data-src="fm"])').forEach(b=>b.onclick=()=>setSource(b.dataset.src));
-/* FM = the head unit's own radio app (a web page cannot tune FM hardware). Long-press to choose another app. */
+if('mediaSession' in navigator){
+ const set=(a,f)=>{try{navigator.mediaSession.setActionHandler(a,f)}catch(e){}};
+ set('play',()=>playPause());set('pause',()=>playPause());set('nexttrack',()=>step(1));set('previoustrack',()=>step(-1));
+}
+
+/* net radio (radio-browser.info) */
+const RB=['https://de1.api.radio-browser.info','https://nl1.api.radio-browser.info','https://at1.api.radio-browser.info'];
+async function rb(path){for(const b of RB){try{const r=await fetchT(b+path,7000);if(r.ok)return await r.json()}catch(e){}}throw new Error('radio')}
+function cc(){return TZ==='Asia/Kuala_Lumpur'?'MY':(navigator.language.split('-')[1]||'MY').toUpperCase()}
+const radioSub=s=>(s.tags||'').split(',').filter(Boolean).slice(0,2).join(' · ')||s.country||'Live radio';
+async function loadStations(q){
+ try{
+  const p=q?`/json/stations/search?name=${encodeURIComponent(q)}&limit=60&hidebroken=true&order=clickcount&reverse=true`:`/json/stations/search?countrycode=${cc()}&limit=60&hidebroken=true&order=clickcount&reverse=true`;
+  const l=(await rb(p)).filter(s=>(s.url_resolved||'').startsWith('https://')&&!s.hls);
+  if(!q){const ls=store.get('lastSt',null);if(ls&&ls.url_resolved){const k=l.findIndex(x=>x.stationuuid&&x.stationuuid===ls.stationuuid);if(k>=0)l.unshift(l.splice(k,1)[0]);else l.unshift(ls)}}
+  media.radio.list=l;media.radio.i=0;
+  if(!l.length)toast('No HTTPS stations found');
+  renderMusic();renderDrawer();return l;
+ }catch(e){toast('Could not load radio stations');return[]}
+}
+function playStation(i){
+ const l=media.radio.list;if(!l.length)return;
+ if(ext&&ext.playing)cmd('pause');
+ pref='radio';store.set('pref','radio');
+ media.radio.i=(i+l.length)%l.length;
+ const s=l[media.radio.i];
+ store.set('lastSt',{name:s.name,url_resolved:s.url_resolved,favicon:s.favicon,tags:s.tags,country:s.country,stationuuid:s.stationuuid});
+ audio.src=s.url_resolved;
+ audio.play().catch(()=>toast('Tap play to start'));
+ renderMusic();
+}
+
+/* other apps (YouTube, YouTube Music, Spotify...) through Android media sessions */
+function cmd(c){try{if(window.NoorNative)NoorNative.mediaCmd(c)}catch(e){}setTimeout(poll,500)}
+function poll(){
+ if(!window.NoorNative||!NoorNative.nowPlaying)return;
+ let r;try{r=JSON.parse(NoorNative.nowPlaying())}catch(e){return}
+ if(!r.ok){access=false;ext=null;renderMusic();return}
+ access=true;
+ ext=r.has?r:null;
+ if(ext){ext.pos=+ext.pos||0;ext.dur=+ext.dur||0}
+ const playing=!!(ext&&ext.playing);
+ if(playing&&!extWasPlaying){pref='ext';store.set('pref','ext')}
+ if(playing&&media.playing)audio.pause();
+ extWasPlaying=playing;
+ if(ext&&ext.key!==extKey){
+  extKey=ext.key;extArt='';
+  if(ext.art==='bmp'){try{extArt=NoorNative.nowArt(ext.key)||''}catch(e){}}
+  else if(ext.art==='url'&&NoorNative.fetchArt)NoorNative.fetchArt(ext.key,ext.artUrl);
+ }
+ renderMusic();
+}
+window.__artDone=(k,b64)=>{if(k===extKey&&b64){extArt=b64;renderMusic()}};
+
+/* transport */
+function playPause(){
+ if(view()==='ext'){cmd('toggle');return}
+ if(!media.radio.list.length){loadStations().then(()=>playStation(0));return}
+ if(audio.paused)playStation(media.radio.i);else audio.pause();
+}
+function step(dir){
+ if(view()==='ext'){cmd(dir>0?'next':'prev');return}
+ if(!media.radio.list.length)return;
+ playStation(media.radio.i+dir);
+}
+(function(){
+ const b=$('btnPlay');let t=0,lp=false;
+ b.addEventListener('pointerdown',()=>{lp=false;t=setTimeout(()=>{lp=true;const on=!store.get('auto',true);store.set('auto',on);toast('Auto-play radio on start: '+(on?'ON':'OFF'))},900)});
+ ['pointerup','pointerleave','pointercancel'].forEach(e=>b.addEventListener(e,()=>clearTimeout(t)));
+ b.addEventListener('click',()=>{if(lp){lp=false;return}playPause()});
+})();
+$('btnNext').onclick=()=>step(1);
+$('btnPrev').onclick=()=>step(-1);
+
+/* source buttons: YouTube / YT Music open the real app, Net Radio plays in here, FM opens the head unit radio */
+function openApp(pkg){if(window.NoorNative&&NoorNative.openApp){NoorNative.openApp(pkg);return}location.href=`intent://#Intent;package=${pkg};S.browser_fallback_url=${encodeURIComponent('https://play.google.com/store/apps/details?id='+pkg)};end`}
+function launch(pkg,name){
+ if(!window.NoorNative){toast(name+' opens only inside the Android app');return}
+ audio.pause();pref='ext';store.set('pref','ext');
+ openApp(pkg);
+}
+function goRadio(){
+ pref='radio';store.set('pref','radio');
+ if(ext&&ext.playing)cmd('pause');
+ renderMusic();
+ if(media.radio.list.length)playStation(media.radio.i);else loadStations().then(()=>playStation(0));
+}
+document.querySelectorAll('.src').forEach(b=>{
+ const s=b.dataset.src;if(s==='fm')return;
+ b.onclick=()=>{if(s==='radio')goRadio();else if(s==='yt')launch('com.google.android.youtube','YouTube');else launch('com.google.android.apps.youtube.music','YouTube Music')};
+});
 const isFm=a=>/radio|\bfm\b|tuner/i.test(a.n)||/radio|\.fm|fmradio|tuner/i.test(a.p);
 function openFm(){
  if(!window.NoorNative){toast('FM works only inside the Android app');return}
  const p=store.get('fmPkg',null);
- if(p&&getAllApps().some(a=>a.p===p)){openApp(p);return}
+ if(p&&getAllApps().some(a=>a.p===p)){audio.pause();openApp(p);return}
  openDrawer('fm');
 }
 (function(){
@@ -667,113 +816,29 @@ function openFm(){
  ['pointerup','pointerleave','pointercancel'].forEach(e=>b.addEventListener(e,()=>clearTimeout(t)));
  b.addEventListener('click',()=>{if(lp){lp=false;return}openFm()});
 })();
+$('title').onclick=()=>{if(view()==='ext'&&ext){openApp(ext.pkg)}else openDrawer('radio')};
+$('sub').onclick=()=>{if($('sub').classList.contains('hint'))openDrawer('access')};
 
-/* radio */
-const RB=['https://de1.api.radio-browser.info','https://nl1.api.radio-browser.info','https://at1.api.radio-browser.info'];
-async function rb(path){for(const b of RB){try{const r=await fetch(b+path);if(r.ok)return await r.json()}catch(e){}}throw new Error('radio')}
-function cc(){return TZ==='Asia/Kuala_Lumpur'?'MY':(navigator.language.split('-')[1]||'MY').toUpperCase()}
-const radioSub=s=>(s.tags||'').split(',').filter(Boolean).slice(0,2).join(' · ')||s.country||'Live radio';
-async function loadStations(q){
+/* network status chip (Wi-Fi / Bluetooth tethering / mobile) */
+const NETI={wifi:'<path d="M5 12.55a11 11 0 0 1 14 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+ bt:'<polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/>',
+ cell:'<path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/>',
+ eth:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+ none:'<path d="M5 12.55a11 11 0 0 1 14 0M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/><line x1="2" y1="2" x2="22" y2="22"/>'};
+const NETL={wifi:'Wi-Fi',bt:'BT tether',cell:'Mobile',eth:'LAN',other:'Online',none:'Offline'};
+function netPoll(){
+ let t='none',ok=false;
  try{
-  const p=q?`/json/stations/search?name=${encodeURIComponent(q)}&limit=60&hidebroken=true&order=clickcount&reverse=true`:`/json/stations/search?countrycode=${cc()}&limit=80&hidebroken=true&order=clickcount&reverse=true`;
-  const l=(await rb(p)).filter(s=>(s.url_resolved||'').startsWith('https://'));
-  if(!q){const ls=store.get('lastSt',null);if(ls&&ls.url_resolved){const k=l.findIndex(x=>x.stationuuid&&x.stationuuid===ls.stationuuid);if(k>=0)l.unshift(l.splice(k,1)[0]);else l.unshift(ls)}}
-  media.radio.list=l;media.radio.i=0;
-  if(!l.length)toast('No HTTPS stations found');
-  if(media.src==='radio'&&l[0]&&!media.playing)setMeta(l[0].name,radioSub(l[0]),l[0].favicon);
-  renderDrawer();return l;
- }catch(e){toast('Could not load radio stations');return[]}
-}
-function playStation(i){
- const l=media.radio.list;if(!l.length)return;
- media.radio.i=(i+l.length)%l.length;
- const s=l[media.radio.i];
- store.set('lastSt',{name:s.name,url_resolved:s.url_resolved,favicon:s.favicon,tags:s.tags,country:s.country,stationuuid:s.stationuuid});
- audio.src=s.url_resolved;
- audio.play().catch(()=>toast('Tap play to start'));
- setMeta(s.name,radioSub(s),s.favicon);
- $('barfill').style.width='100%';$('tc').textContent='LIVE';$('td').textContent='';
-}
-
-/* youtube (IFrame API) */
-let yt=null,ytReady=false,ytLoaded=false,pendingYT=null,ytItem=null;
-function loadYTApi(){
- if(yt||document.getElementById('ytapi'))return;
- window.onYouTubeIframeAPIReady=initYT;
- const s=document.createElement('script');s.id='ytapi';s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
-}
-function initYT(){
- yt=new YT.Player('ytp',{width:200,height:200,playerVars:{playsinline:1,controls:0,rel:0,modestbranding:1,iv_load_policy:3,origin:location.origin},
-  events:{onReady:()=>{ytReady=true;if(pendingYT){const p=pendingYT;pendingYT=null;playYT(p)}},onStateChange:onYTState,onError:()=>toast('This video cannot be played here')}});
-}
-function onYTState(e){
- if(media.src==='radio')return;
- if(e.data===1){
-  setPlaying(true);
-  try{const d=yt.getVideoData();if(d&&d.title){setMeta(d.title,d.author||NAMES[media.src]);if(media.cur){media.cur.t=d.title;store.set('last_'+(media.cur.s||media.src),media.cur);const it=lib.find(x=>x.u===media.cur.u);if(it){it.t=d.title;store.set('lib',lib)}}}}catch(x){}
- }else if(e.data===2||e.data===0)setPlaying(false);
-}
-function parseYT(input){
- input=input.trim();let v=null,list=null;
- if(/^[\w-]{11}$/.test(input))return{v:input,list:null};
- if(/^(PL|OLAK|UU|FL)[\w-]+$/.test(input))return{v:null,list:input};
- try{
-  const u=new URL(input.includes('://')?input:'https://'+input);
-  if(u.hostname==='youtu.be')v=u.pathname.slice(1);
-  else{v=u.searchParams.get('v');if(!v&&u.pathname.startsWith('/shorts/'))v=u.pathname.split('/')[2]}
-  list=u.searchParams.get('list');
+  if(window.NoorNative&&NoorNative.netInfo){const r=JSON.parse(NoorNative.netInfo());t=r.t||'none';ok=!!r.ok}
+  else{ok=navigator.onLine;t=ok?'wifi':'none'}
  }catch(e){}
- if(list&&/^RD/.test(list))list=null;
- return{v,list};
+ $('net').className=t==='none'?'off':(ok?'':'bad');
+ $('netIcon').innerHTML=NETI[t]||NETI.wifi;
+ $('netTxt').textContent=(NETL[t]||'Online')+(t!=='none'&&!ok?' · no internet':'');
 }
-function playYT(item){
- const {v,list}=parseYT(item.u);
- if(!v&&!list){toast('That does not look like a YouTube link');return}
- store.set('last_'+(item.s||media.src),item);
- if(!yt||!ytReady){pendingYT=item;media.cur=item;loadYTApi();toast('Loading player…');return}
- ytLoaded=true;media.cur=item;ytItem=item;
- if(list)yt.loadPlaylist({list,listType:'playlist',index:0});else yt.loadVideoById(v);
- setMeta(item.t||'Loading…',NAMES[item.s]||'YouTube');
-}
-setInterval(()=>{
- if(media.src==='radio'||!yt||!ytReady||!ytLoaded)return;
- try{const c=yt.getCurrentTime(),d=yt.getDuration();$('tc').textContent=mmss(c);$('td').textContent=mmss(d);$('barfill').style.width=(d>0?Math.min(c/d,1)*100:0)+'%'}catch(e){}
-},1000);
+addEventListener('online',netPoll);addEventListener('offline',netPoll);
 
-/* transport */
-function playPause(){
- if(media.src==='radio'){
-  if(!media.radio.list.length){loadStations().then(()=>playStation(0));return}
-  if(audio.paused)playStation(media.radio.i);else audio.pause();
- }else{
-  if(media.cur&&(!ytReady||!ytLoaded||!ytItem||ytItem.u!==media.cur.u)){playYT(media.cur);return}
-  if(!ytReady||!ytLoaded){openDrawer('lib');return}
-  try{yt.getPlayerState()===1?yt.pauseVideo():yt.playVideo()}catch(e){}
- }
-}
-function savedList(){return lib.filter(x=>x.s===media.src)}
-function step(dir){
- if(media.src==='radio'){playStation(media.radio.i+dir);return}
- if(!ytReady||!ytLoaded){openDrawer('lib');return}
- try{
-  const pl=yt.getPlaylist&&yt.getPlaylist();
-  if(pl&&pl.length){dir>0?yt.nextVideo():yt.previousVideo();return}
- }catch(e){}
- const l=savedList();if(!l.length)return;
- const i=Math.max(0,l.findIndex(x=>media.cur&&x.u===media.cur.u));
- playYT(l[(i+dir+l.length)%l.length]);
-}
-(function(){
- const b=$('btnPlay');let t=0,lp=false;
- b.addEventListener('pointerdown',()=>{lp=false;t=setTimeout(()=>{lp=true;const on=!store.get('auto',true);store.set('auto',on);toast('Auto-play on start: '+(on?'ON':'OFF'))},900)});
- ['pointerup','pointerleave','pointercancel'].forEach(e=>b.addEventListener(e,()=>clearTimeout(t)));
- b.addEventListener('click',()=>{if(lp){lp=false;return}playPause()});
-})();
-$('btnNext').onclick=()=>step(1);
-$('btnPrev').onclick=()=>step(-1);
-$('title').onclick=()=>openDrawer('lib');
-
-/* ---------- drawer: library + apps ---------- */
+/* ---------- drawer: apps / FM app / net radio / setup / prayer zone ---------- */
 const APPS=[
  ['YouTube Music','com.google.android.apps.youtube.music','note'],['YouTube','com.google.android.youtube','play'],['Spotify','com.spotify.music','note'],
  ['Waze','com.waze','nav'],['Google Maps','com.google.android.apps.maps','nav'],['Phone','com.google.android.dialer','phone'],
@@ -787,12 +852,12 @@ const AI={
  gear:'<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'};
 let allApps=null;
 function getAllApps(){if(allApps)return allApps;try{if(window.NoorNative&&NoorNative.listApps)allApps=JSON.parse(NoorNative.listApps())}catch(e){}return allApps||[]}
-function openApp(pkg){if(window.NoorNative&&NoorNative.openApp){NoorNative.openApp(pkg);return}location.href=`intent://#Intent;package=${pkg};S.browser_fallback_url=${encodeURIComponent('https://play.google.com/store/apps/details?id='+pkg)};end`}
 let dMode=null;
-function openDrawer(m){dMode=m;$('drawer').classList.add('open');renderDrawer();if(m==='lib'&&media.src==='radio'&&media.radio.list.length<2)loadStations()}
+function openDrawer(m){dMode=m;$('drawer').classList.add('open');renderDrawer();if(m==='radio'&&media.radio.list.length<2)loadStations()}
 function closeDrawer(){dMode=null;$('drawer').classList.remove('open');$('dq').blur()}
 $('dclose').onclick=closeDrawer;
 $('btnApps').onclick=()=>openDrawer('apps');
+const appTile=a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="data:image/png;base64,${a.i}" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`;
 function renderDrawer(){
  if(!dMode)return;
  const L=$('dlist'),tools=$('dtools');
@@ -800,7 +865,7 @@ function renderDrawer(){
   const all=getAllApps(),m=all.filter(isFm),list=m.length?m:all;
   $('dtitle').textContent=m.length?'Choose your FM radio app':'FM app not detected. Pick it here';
   tools.style.display='none';L.className='grid';
-  L.innerHTML=list.map(a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="data:image/png;base64,${a.i}" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`).join('')||'<div class="empty">No apps found. FM works only inside the Android app.</div>';
+  L.innerHTML=list.map(appTile).join('')||'<div class="empty">No apps found. FM works only inside the Android app.</div>';
   return;
  }
  if(dMode==='apps'){
@@ -809,42 +874,51 @@ function renderDrawer(){
   if(all.length){
    const fav=APPS.map(a=>a[1]);
    const sorted=all.slice().sort((x,y)=>{const a=fav.indexOf(x.p),b=fav.indexOf(y.p);return(a<0?999:a)-(b<0?999:b)});
-   L.innerHTML=sorted.map(a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="data:image/png;base64,${a.i}" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`).join('');
+   L.innerHTML=sorted.map(appTile).join('');
   }else{
    L.innerHTML=APPS.map(a=>`<button class="tile glassbtn" data-pkg="${esc(a[1])}"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${AI[a[2]]}</svg><span>${esc(a[0])}</span></button>`).join('');
   }
   return;
  }
- tools.style.display='flex';L.className='';
- if(media.src==='radio'){
-  $('dtitle').textContent='Radio stations';$('dq').placeholder='Search stations (e.g. Hijrah, Nasyid, BFM)';$('dgo').textContent='Search';
-  const l=media.radio.list;
-  L.innerHTML=l.length?l.map((s,i)=>`<button class="row glassbtn${i===media.radio.i?' on':''}" data-st="${i}"><span class="a">${esc(s.name)}</span><span class="b">${esc(radioSub(s))}</span></button>`).join(''):'<div class="empty">Loading stations…</div>';
- }else{
-  $('dtitle').textContent=NAMES[media.src]+' library';$('dq').placeholder=media.src==='ytm'?'Paste a YouTube Music link':'Paste a YouTube link or playlist';$('dgo').textContent='Play';
-  const l=savedList();
-  let h=media.src==='ytm'?'<button class="row glassbtn" data-pkg="com.google.android.apps.youtube.music"><span class="a">Open the YouTube Music app</span><span class="b">Use your own library and Premium in the full app</span></button>':'';
-  h+=l.length?l.map(x=>`<div style="display:flex;gap:8px;flex-shrink:0"><button class="row glassbtn${media.cur&&media.cur.u===x.u?' on':''}" style="flex:1;min-width:0" data-u="${esc(x.u)}"><span class="a">${esc(x.t||x.u)}</span><span class="b">${esc(x.u)}</span></button><button class="glassbtn" style="width:60px;border-radius:18px;flex-shrink:0" aria-label="Remove" data-del="${esc(x.u)}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>`).join(''):'<div class="empty">Paste a link above to play it. Links you play are saved here for one-tap access.</div>';
-  L.innerHTML=h;
+ if(dMode==='access'){
+  $('dtitle').textContent='Now Playing setup';tools.style.display='none';L.className='';
+  L.innerHTML=`<div class="empty">To show the song and cover of YouTube (or any music app) on this screen, Noor Drive needs Notification access.<br>1. Tap App settings, open the ⋮ menu and choose Allow restricted settings (only if it appears).<br>2. Tap Notification access and switch on Noor Drive.<br>3. Come back here and play something in YouTube.</div>
+<button class="row glassbtn" data-act="appset"><span class="a">App settings</span><span class="b">Allow restricted settings if Android asks</span></button>
+<button class="row glassbtn" data-act="notif"><span class="a">Notification access</span><span class="b">Switch on Noor Drive</span></button>`;
+  return;
  }
+ if(dMode==='zone'){
+  $('dtitle').textContent='Prayer zone';tools.style.display='none';L.className='';
+  const cur=store.get('zone',null);
+  L.innerHTML=`<button class="row glassbtn${cur?'':' on'}" data-zone=""><span class="a">Automatic (follows your GPS)</span><span class="b">Now: ${esc(prayerZone?prayerZone+' · '+(ZN[prayerZone]||''):'coordinate-based')}</span></button>`+
+   Object.keys(ZN).map(z=>`<button class="row glassbtn${cur===z?' on':''}" data-zone="${z}"><span class="a">${z}</span><span class="b">${esc(ZN[z])}</span></button>`).join('');
+  return;
+ }
+ /* net radio stations */
+ tools.style.display='flex';L.className='';
+ $('dtitle').textContent='Net radio';$('dq').placeholder='Search stations (e.g. Hijrah, Nasyid, BFM)';$('dgo').textContent='Search';
+ const l=media.radio.list;
+ L.innerHTML=l.length?l.map((s,i)=>`<button class="row glassbtn${i===media.radio.i?' on':''}" data-st="${i}"><span class="a">${esc(s.name)}</span><span class="b">${esc(radioSub(s))}</span></button>`).join(''):'<div class="empty">Loading stations…</div>';
 }
 $('dlist').addEventListener('click',e=>{
  const t=e.target.closest('button');if(!t)return;
- if(t.dataset.pkg){if(dMode==='fm')store.set('fmPkg',t.dataset.pkg);openApp(t.dataset.pkg);return}
+ if(t.dataset.pkg){if(dMode==='fm'){store.set('fmPkg',t.dataset.pkg);audio.pause()}openApp(t.dataset.pkg);return}
  if(t.dataset.st!=null){playStation(+t.dataset.st);closeDrawer();return}
- if(t.dataset.del){lib=lib.filter(x=>!(x.u===t.dataset.del&&x.s===media.src));store.set('lib',lib);renderDrawer();return}
- if(t.dataset.u){const it=lib.find(x=>x.u===t.dataset.u&&x.s===media.src);if(it){playYT(it);closeDrawer()}}
+ if(t.dataset.act){
+  let ok=false;try{ok=t.dataset.act==='notif'?NoorNative.openNotifSettings():NoorNative.openAppSettings()}catch(x){}
+  if(!ok)toast('Could not open that screen. Open Android Settings > Apps > Special access > Notification access.');
+  return;
+ }
+ if(t.dataset.zone!=null){store.set('zone',t.dataset.zone||null);closeDrawer();pLast=0;loadPrayer();return}
 });
-function drawerGo(){
- const v=$('dq').value.trim();if(!v)return;
- if(media.src==='radio'){loadStations(v);return}
- const p=parseYT(v);if(!p.v&&!p.list){toast('That does not look like a YouTube link');return}
- let it=lib.find(x=>x.u===v&&x.s===media.src);
- if(!it){it={u:v,s:media.src,t:''};lib.unshift(it);lib=lib.slice(0,40);store.set('lib',lib)}
- $('dq').value='';playYT(it);closeDrawer();
-}
+function drawerGo(){const v=$('dq').value.trim();if(v)loadStations(v)}
 $('dgo').onclick=drawerGo;
 $('dq').addEventListener('keydown',e=>{if(e.key==='Enter')drawerGo()});
+(function(){
+ const el=$('prayer').parentElement;let t=0;
+ el.addEventListener('pointerdown',()=>{t=setTimeout(()=>openDrawer('zone'),700)});
+ ['pointerup','pointerleave','pointercancel'].forEach(e=>el.addEventListener(e,()=>clearTimeout(t)));
+})();
 
 /* ---------- wake lock ---------- */
 let wl=null;
@@ -871,10 +945,11 @@ if(window.NoorNative)$('btnFs').style.display='none';
 /* ---------- start ---------- */
 initMap();tick();idleCard();showStats();showSpeed(0);
 {const w0=store.get('wx',null);if(w0&&w0.t!=null){wx=w0;showWeather()}}
-{const p0=store.get('pr',null);if(p0&&p0.day===new Date().toDateString()&&Array.isArray(p0.t)){prayers=p0.t.map(([n,h,m])=>{const x=new Date();x.setHours(h,m,0,0);return{n,x}});prayerDay=p0.day;updatePrayerText();applyNight()}}
-setSource(media.src,true);
+{const p0=store.get('pr',null);if(p0&&p0.zone&&p0.day===new Date().toDateString()&&Array.isArray(p0.t)){prayers=p0.t.map(([n,h,m])=>{const x=new Date();x.setHours(h,m,0,0);return{n,x}});prayerDay=p0.day;prayerZone=p0.zone;hijriStr=p0.hijri||'';zoneToast=p0.zone;updatePrayerText();applyNight();tick()}}
+renderMusic();poll();netPoll();setInterval(poll,1500);setInterval(netPoll,5000);
+setTimeout(()=>{if(media.radio.list.length<2)loadStations()},4000);
 if(store.get('lastpos',null)&&!new URLSearchParams(location.search).has('demo'))bootData();
-if(window.NoorNative&&store.get('auto',true))setTimeout(()=>{try{if(media.src==='radio'){if(media.radio.list.length)playStation(0)}else if(media.cur)playYT(media.cur)}catch(e){}},2000);
+if(window.NoorNative&&store.get('auto',true))setTimeout(()=>{if(ext&&ext.playing)return;if(media.radio.list.length)playStation(0)},2500);
 if(new URLSearchParams(location.search).has('demo')){
  /* ?demo=1 simulates driving, handy for previewing on a computer */
  let a=0,lat=pos.lat,lon=pos.lon,h=45;

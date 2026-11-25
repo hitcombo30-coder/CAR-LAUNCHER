@@ -3,15 +3,26 @@ package com.noordrive.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.drawable.Drawable
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.provider.Settings
 import android.util.Base64
 import android.view.View
 import android.view.WindowManager
@@ -26,16 +37,22 @@ import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Home-screen (launcher) shell around the Noor Drive web UI in assets/index.html.
  * - Registered as a HOME app, so the Home button always returns here.
  * - Back button never leaves the app (it only closes panels inside the UI).
+ * - Shows what other apps (YouTube, YT Music...) are playing, via media sessions.
  */
 class MainActivity : Activity() {
 
     private lateinit var web: WebView
     private var pendingGeo: Pair<String, GeolocationPermissions.Callback>? = null
+
+    @Volatile
+    private var lastController: MediaController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,8 +120,73 @@ class MainActivity : Activity() {
         web.addJavascriptInterface(Bridge(), "NoorNative")
     }
 
+    // ---------------------------------------------------------------------------------------
+    // helpers
+    // ---------------------------------------------------------------------------------------
+
+    private fun hasNotifAccess(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+            ?: return false
+        return flat.split(":").any {
+            ComponentName.unflattenFromString(it)?.packageName == packageName
+        }
+    }
+
+    /** The media session to show: a playing one if any, otherwise the most recent one. */
+    private fun pickSession(): MediaController? {
+        val msm = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+        val list = msm.getActiveSessions(ComponentName(this, NoorNotificationListener::class.java))
+            .filter { it.packageName != packageName }
+        val playing = list.firstOrNull {
+            val s = it.playbackState?.state
+            s == PlaybackState.STATE_PLAYING || s == PlaybackState.STATE_BUFFERING
+        }
+        return playing ?: list.firstOrNull { it.metadata != null }
+    }
+
+    private fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    } catch (e: Exception) {
+        pkg
+    }
+
+    private fun scaleToJpegBase64(src: Bitmap): String {
+        val max = 240
+        val ratio = minOf(max.toFloat() / src.width, max.toFloat() / src.height, 1f)
+        val w = (src.width * ratio).toInt().coerceAtLeast(1)
+        val h = (src.height * ratio).toInt().coerceAtLeast(1)
+        val bmp = if (ratio < 1f) Bitmap.createScaledBitmap(src, w, h, true) else src
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
+    private fun bitmapFrom(md: MediaMetadata): Bitmap? {
+        return md.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+            ?: md.getBitmap(MediaMetadata.METADATA_KEY_ART)
+            ?: md.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+    }
+
+    private fun artUriFrom(md: MediaMetadata): String? {
+        return md.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI)
+            ?: md.getString(MediaMetadata.METADATA_KEY_ART_URI)
+            ?: md.getString(MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI)
+    }
+
+    private fun pushToJs(js: String) {
+        runOnUiThread { web.evaluateJavascript(js, null) }
+    }
+
+    private fun startSafe(i: Intent): Boolean = try {
+        startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    } catch (e: Exception) {
+        false
+    }
+
     /** Functions the web UI can call as window.NoorNative.* */
     inner class Bridge {
+
         @JavascriptInterface
         fun openApp(pkg: String) {
             runOnUiThread {
@@ -141,6 +223,189 @@ class MainActivity : Activity() {
                 arr.put(o)
             }
             return arr.toString()
+        }
+
+        /** Wi-Fi / Bluetooth tethering / mobile data, and whether the internet really works. */
+        @JavascriptInterface
+        fun netInfo(): String {
+            return try {
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+                val t = when {
+                    caps == null -> "none"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "bt"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "eth"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cell"
+                    else -> "other"
+                }
+                val ok = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+                """{"t":"$t","ok":$ok}"""
+            } catch (e: Exception) {
+                """{"t":"none","ok":false}"""
+            }
+        }
+
+        /** Async GET for the official JAKIM prayer-time server (no browser CORS limits here). */
+        @JavascriptInterface
+        fun fetchNative(id: String, url: String) {
+            if (!url.startsWith("https://www.e-solat.gov.my/")) {
+                pushToJs("window.__natDone&&window.__natDone(${JSONObject.quote(id)},false,\"blocked\")")
+                return
+            }
+            Thread {
+                var ok = true
+                var out: String
+                try {
+                    val c = URL(url).openConnection() as HttpURLConnection
+                    c.connectTimeout = 10000
+                    c.readTimeout = 10000
+                    c.setRequestProperty("User-Agent", "NoorDrive/1.0")
+                    out = c.inputStream.bufferedReader().use { it.readText() }
+                } catch (e: Exception) {
+                    ok = false
+                    out = e.toString()
+                }
+                pushToJs("window.__natDone&&window.__natDone(${JSONObject.quote(id)},$ok,${JSONObject.quote(out)})")
+            }.start()
+        }
+
+        // ----- Now Playing (other apps) -----
+
+        @JavascriptInterface
+        fun hasNotifAccess(): Boolean = hasNotifAccess()
+
+        @JavascriptInterface
+        fun openNotifSettings(): Boolean =
+            startSafe(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+
+        @JavascriptInterface
+        fun openAppSettings(): Boolean = startSafe(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        )
+
+        @JavascriptInterface
+        fun nowPlaying(): String {
+            val o = JSONObject()
+            if (!hasNotifAccess()) {
+                o.put("ok", false)
+                o.put("reason", "access")
+                return o.toString()
+            }
+            try {
+                val c = pickSession()
+                lastController = c
+                o.put("ok", true)
+                if (c == null) {
+                    o.put("has", false)
+                    return o.toString()
+                }
+                val md = c.metadata
+                val st = c.playbackState
+                val title = md?.getString(MediaMetadata.METADATA_KEY_TITLE)
+                    ?: md?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE) ?: ""
+                val artist = md?.getString(MediaMetadata.METADATA_KEY_ARTIST)
+                    ?: md?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
+                    ?: md?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE) ?: ""
+                val album = md?.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: ""
+                val dur = md?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+                var pos = 0L
+                if (st != null) {
+                    pos = st.position
+                    if (st.state == PlaybackState.STATE_PLAYING && st.lastPositionUpdateTime > 0) {
+                        pos += ((SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
+                    }
+                }
+                if (pos < 0) pos = 0
+                val playing = st?.state == PlaybackState.STATE_PLAYING ||
+                        st?.state == PlaybackState.STATE_BUFFERING
+                o.put("has", true)
+                o.put("pkg", c.packageName)
+                o.put("app", appLabel(c.packageName))
+                o.put("title", title)
+                o.put("artist", artist)
+                o.put("album", album)
+                o.put("dur", if (dur > 0) dur else 0)
+                o.put("pos", pos)
+                o.put("playing", playing)
+                o.put("key", "${c.packageName}|$title|$artist")
+                if (md != null && bitmapFrom(md) != null) {
+                    o.put("art", "bmp")
+                } else {
+                    val u = if (md != null) artUriFrom(md) else null
+                    if (u != null && u.startsWith("https://")) {
+                        o.put("art", "url")
+                        o.put("artUrl", u)
+                    } else if (u != null && (u.startsWith("content://") || u.startsWith("file://"))) {
+                        o.put("art", "bmp")
+                    } else {
+                        o.put("art", "")
+                    }
+                }
+            } catch (e: SecurityException) {
+                o.put("ok", false)
+                o.put("reason", "access")
+            } catch (e: Exception) {
+                o.put("ok", true)
+                o.put("has", false)
+            }
+            return o.toString()
+        }
+
+        /** Cover art as a small JPEG (base64), for bitmap / content:// art. */
+        @JavascriptInterface
+        fun nowArt(key: String): String {
+            return try {
+                val md = lastController?.metadata ?: return ""
+                var bmp = bitmapFrom(md)
+                if (bmp == null) {
+                    val u = artUriFrom(md)
+                    if (u != null && (u.startsWith("content://") || u.startsWith("file://"))) {
+                        bmp = contentResolver.openInputStream(Uri.parse(u))?.use {
+                            BitmapFactory.decodeStream(it)
+                        }
+                    }
+                }
+                if (bmp == null) "" else scaleToJpegBase64(bmp)
+            } catch (e: Exception) {
+                ""
+            }
+        }
+
+        /** Cover art that is only available as an https link: download off the UI thread. */
+        @JavascriptInterface
+        fun fetchArt(key: String, url: String) {
+            if (!url.startsWith("https://")) return
+            Thread {
+                var b64 = ""
+                try {
+                    val c = URL(url).openConnection() as HttpURLConnection
+                    c.connectTimeout = 8000
+                    c.readTimeout = 8000
+                    c.setRequestProperty("User-Agent", "NoorDrive/1.0")
+                    val bmp = c.inputStream.use { BitmapFactory.decodeStream(it) }
+                    if (bmp != null) b64 = scaleToJpegBase64(bmp)
+                } catch (e: Exception) {
+                }
+                pushToJs("window.__artDone&&window.__artDone(${JSONObject.quote(key)},${JSONObject.quote(b64)})")
+            }.start()
+        }
+
+        @JavascriptInterface
+        fun mediaCmd(cmd: String) {
+            try {
+                val c = lastController ?: pickSession() ?: return
+                val tc = c.transportControls
+                when (cmd) {
+                    "toggle" ->
+                        if (c.playbackState?.state == PlaybackState.STATE_PLAYING) tc.pause() else tc.play()
+                    "play" -> tc.play()
+                    "pause" -> tc.pause()
+                    "next" -> tc.skipToNext()
+                    "prev" -> tc.skipToPrevious()
+                }
+            } catch (e: Exception) {
+            }
         }
     }
 
