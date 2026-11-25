@@ -1,0 +1,780 @@
+<!doctype html>
+<!--
+  NOOR DRIVE - Islamic luxury car player (single file, no build step)
+  Features: OpenStreetMap + live speed/max/avg, clock, weather, prayer times,
+  YouTube / YouTube Music / Radio player, app launcher, destination search + turn-by-turn.
+  Host it on GitHub Pages (needs HTTPS for GPS) and open it in Chrome on your Android head unit.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#04140F">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Noor Drive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&amp;family=Amiri:wght@700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#03130f;overflow:hidden;font-family:Montserrat,system-ui,sans-serif;color:#F5EFD9;-webkit-user-select:none;user-select:none}
+button{font-family:inherit;cursor:pointer;color:inherit;border:0;padding:0;background:none}
+input{font-family:inherit;-webkit-user-select:text;user-select:text}
+svg{display:block}
+#stage{position:fixed;left:50%;top:50%;width:1280px;height:720px;transform-origin:center;overflow:hidden;
+ background:radial-gradient(900px 600px at 15% 10%,#0E3A2D 0%,rgba(14,58,45,0) 60%),radial-gradient(800px 600px at 95% 100%,#14463A 0%,rgba(20,70,58,0) 55%),linear-gradient(160deg,#04140F,#071F18 55%,#03100C)}
+#bgpat{position:absolute;left:0;top:0}
+#grid{position:absolute;left:16px;top:16px;width:1248px;height:688px;display:flex;flex-direction:row-reverse;gap:14px}
+#left{position:relative;width:560px;height:688px;display:flex;flex-direction:column;gap:14px}
+.glass{background:linear-gradient(145deg,rgba(26,70,57,.86),rgba(8,34,27,.9));border:1px solid rgba(233,200,119,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.22);border-radius:28px}
+.fx .glass:not(.dark){background:linear-gradient(145deg,rgba(255,255,255,.15),rgba(255,255,255,.04));backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.glassbtn{background:linear-gradient(160deg,rgba(255,255,255,.22),rgba(255,255,255,.05));border:1px solid rgba(233,200,119,.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.3);color:#F7EBC6;display:flex;align-items:center;justify-content:center}
+.glassbtn:active,.goldbtn:active{transform:scale(.95)}
+.goldbtn{background:linear-gradient(160deg,#F6DF9B,#C9A24E 60%,#9C7A33);border:1px solid rgba(255,244,205,.7);box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 3px 8px rgba(0,0,0,.4);color:#0A1F18;display:flex;align-items:center;justify-content:center}
+.dark{background:linear-gradient(160deg,rgba(8,34,27,.88),rgba(8,34,27,.65))}
+
+/* clock */
+#p-clock{height:214px;padding:16px 22px 14px;display:flex;flex-direction:column;justify-content:space-between}
+#time{font-size:92px;line-height:92px;font-weight:600;letter-spacing:-2px;color:#FFF6D8}
+#date{margin-top:6px;font-size:19px;font-weight:500}
+#hijri{font-size:16px;font-weight:500;color:#E9C877}
+#wicon{width:76px;height:76px;border-radius:38px}
+#temp{font-size:38px;line-height:38px;font-weight:600;color:#FFF6D8}
+#wtext{font-size:15px;font-weight:500;color:#BFD6CB;max-width:210px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#prayerrow{display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(233,200,119,.3);padding-top:10px}
+#prayer{font-size:17px;font-weight:500}
+#prayer b{color:#E9C877;font-weight:700}
+#prayer .m{color:#BFD6CB;font-size:15px}
+.bism{font-family:Amiri,serif;font-size:30px;line-height:34px;color:#E9C877}
+
+/* speed */
+#p-speed{height:226px;padding:14px 22px;display:flex;align-items:center;gap:22px}
+#gauge{position:relative;width:198px;height:198px;flex-shrink:0}
+#gnum{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding-top:6px}
+#speed{font-size:78px;line-height:78px;font-weight:700;color:#FFF6D8}
+#gunit{font-size:16px;font-weight:600;letter-spacing:3px;color:#E9C877}
+#sright{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
+#hdgbox{width:64px;height:64px;border-radius:32px;flex-shrink:0}
+.chip{flex:1;border-radius:18px;padding:10px 14px;display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left}
+.chip .l{font-size:13px;font-weight:600;letter-spacing:2px;color:#BFD6CB}
+.chip .v{font-size:32px;line-height:36px;font-weight:700;color:#FFF6D8}
+.chip .v small{font-size:14px;font-weight:500;color:#E9C877}
+
+/* music */
+#p-music{flex:1;min-height:0;padding:10px 14px 10px 10px;display:flex;align-items:center;gap:16px}
+#artwrap{position:relative;width:200px;height:200px;border-radius:22px;overflow:hidden;flex-shrink:0;border:1px solid rgba(233,200,119,.6);background:linear-gradient(150deg,#14604A,#072A20 70%)}
+#artwrap svg.star{position:absolute;left:0;top:0}
+#artar{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-family:Amiri,serif;font-size:72px;color:#F6DF9B}
+#artimg{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;object-fit:cover;display:none}
+#ytbox{position:absolute;top:0;left:0;right:0;bottom:0;display:none;background:#000}
+#ytbox iframe,#ytbox #ytp{width:200px;height:200px}
+#minfo{flex:1;min-width:0;height:200px;display:flex;flex-direction:column;justify-content:space-between}
+#srcs{display:flex;gap:8px}
+.src{flex:1;height:36px;border-radius:18px;font-size:14px;font-weight:600}
+.src.on{background:linear-gradient(160deg,#F6DF9B,#C9A24E 60%,#9C7A33);border-color:rgba(255,244,205,.7);color:#0A1F18;font-weight:700}
+#title{display:block;width:100%;text-align:left;font-size:24px;line-height:28px;font-weight:700;color:#FFF6D8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sub{font-size:16px;line-height:22px;font-weight:500;color:#E9C877;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#prog{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500;color:#BFD6CB}
+#prog .t{min-width:38px}
+#prog .t.r{text-align:right}
+#bar{flex:1;height:8px;border-radius:4px;background:rgba(255,255,255,.16)}
+#barfill{width:0;height:8px;border-radius:4px;background:linear-gradient(90deg,#9C7A33,#F6DF9B)}
+#ctrl{display:flex;align-items:center;gap:10px}
+#btnPrev{width:52px;height:52px;border-radius:26px}
+#btnPlay{width:64px;height:64px;border-radius:32px}
+#btnNext{width:76px;height:52px;border-radius:26px}
+#btnApps{margin-left:auto;width:76px;height:52px;border-radius:18px;flex-direction:column;gap:1px}
+#btnApps span{font-size:12px;font-weight:600;letter-spacing:1px}
+
+/* drawer */
+#drawer{display:none;position:absolute;left:0;top:0;width:560px;height:688px;z-index:60;padding:18px 20px;flex-direction:column;gap:12px;background:linear-gradient(160deg,rgba(6,30,23,.96),rgba(4,20,15,.97))}
+#drawer.open{display:flex}
+#dhead{display:flex;align-items:center;justify-content:space-between}
+#dtitle{font-size:24px;font-weight:700;color:#FFF6D8}
+#dclose{width:52px;height:52px;border-radius:26px}
+#dtools{display:flex;gap:10px}
+.inp{flex:1;min-width:0;height:52px;border-radius:26px;border:1px solid rgba(233,200,119,.5);background:rgba(255,255,255,.08);color:#FFF6D8;font-size:17px;padding:0 20px;outline:none}
+.inp::placeholder{color:#9DBFB2}
+.gobtn{height:52px;padding:0 24px;border-radius:26px;font-size:16px;font-weight:700}
+#dlist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+#dlist.grid{display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:150px;gap:12px;align-content:start}
+.row{min-height:60px;border-radius:18px;padding:10px 16px;text-align:left;display:flex;flex-direction:column;justify-content:center;gap:2px;flex-shrink:0}
+.row.on{border-color:#F6DF9B;box-shadow:0 0 0 1px #F6DF9B}
+.row .a{font-size:17px;font-weight:600;color:#FFF6D8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .b{font-size:13px;font-weight:500;color:#BFD6CB;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile{border-radius:22px;flex-direction:column;gap:12px;font-size:16px;font-weight:600;min-width:0;padding:0 6px}
+.tile span{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile img{border-radius:14px}
+.empty{color:#BFD6CB;font-size:16px;padding:12px 4px;line-height:24px}
+
+/* map */
+#mapwrap{position:relative;width:674px;height:688px;overflow:hidden}
+#map{position:absolute;top:0;left:0;right:0;bottom:0;background:#0A1F19;z-index:0}
+#map::after{content:"";position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(12,70,52,.2);pointer-events:none;z-index:450}
+.leaflet-container{background:#0A1F19;font-family:Montserrat,sans-serif}
+#car{width:60px;height:60px}
+#card{position:absolute;left:16px;top:16px;width:372px;height:96px;padding:14px 18px;display:flex;align-items:center;gap:16px;z-index:1000;border-radius:24px}
+#cardIcon{width:68px;height:68px;border-radius:22px;flex-shrink:0}
+#cardBig{font-size:34px;line-height:38px;font-weight:700;color:#FFF6D8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cardSmall{font-size:16px;line-height:22px;font-weight:500;color:#E9C877;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cardTxt{min-width:0;flex:1}
+#tools{position:absolute;right:16px;top:16px;display:flex;flex-direction:column;gap:12px;z-index:1000}
+#tools button{width:60px;height:60px;border-radius:20px}
+#tools button.on{border-color:#F6DF9B;color:#F6DF9B}
+#strip{position:absolute;left:16px;right:16px;bottom:22px;height:84px;padding:12px 22px;z-index:1000;display:flex;align-items:center;border-radius:24px}
+#stripIdle{display:flex;align-items:center;gap:16px;width:100%;text-align:left}
+#stripIdle .big{font-size:26px;font-weight:700;color:#FFF6D8;line-height:30px}
+#stripIdle .sm{font-size:14px;font-weight:500;color:#BFD6CB}
+#stripNav{display:none;align-items:center;justify-content:space-between;width:100%}
+.sep{width:1px;height:44px;background:rgba(233,200,119,.35)}
+.st .b{font-size:26px;line-height:30px;font-weight:700;color:#FFF6D8}
+.st .b small{font-size:16px;font-weight:500;color:#E9C877}
+.st .s{font-size:14px;font-weight:500;color:#BFD6CB}
+#btnCancel{width:52px;height:52px;border-radius:26px}
+#attr{position:absolute;right:20px;bottom:3px;z-index:1000;font-size:12px;color:#9DBFB2}
+#search{display:none;position:absolute;left:16px;top:16px;width:566px;z-index:1100;padding:12px;flex-direction:column;gap:10px;border-radius:24px;background:linear-gradient(160deg,rgba(6,30,23,.97),rgba(4,20,15,.97))}
+#search.open{display:flex}
+#qrow{display:flex;gap:10px}
+#results{display:flex;flex-direction:column;gap:8px;max-height:330px;overflow-y:auto}
+#toast{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);z-index:2000;padding:12px 22px;border-radius:22px;font-size:16px;font-weight:600;color:#FFF6D8;opacity:0;pointer-events:none;transition:opacity .25s;max-width:700px;text-align:center}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="stage">
+<svg id="bgpat" width="1280" height="720" viewBox="0 0 1280 720" aria-hidden="true">
+<defs><pattern id="star" width="90" height="90" patternUnits="userSpaceOnUse"><g fill="none" stroke="#E9C877" stroke-opacity=".13" stroke-width="1"><rect x="25" y="25" width="40" height="40"/><rect x="25" y="25" width="40" height="40" transform="rotate(45 45 45)"/><circle cx="45" cy="45" r="28"/><circle cx="0" cy="0" r="14"/><circle cx="90" cy="0" r="14"/><circle cx="0" cy="90" r="14"/><circle cx="90" cy="90" r="14"/></g></pattern></defs>
+<rect width="1280" height="720" fill="url(#star)"/>
+</svg>
+
+<div id="grid">
+<div id="left">
+
+<!-- CLOCK / WEATHER / PRAYER -->
+<section class="glass" id="p-clock">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<div style="display:flex;flex-direction:column">
+<div id="time">--:--</div>
+<div id="date">&nbsp;</div>
+<div id="hijri">&nbsp;</div>
+</div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+<div id="wicon" class="glassbtn"><svg id="wsvg" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg></div>
+<div id="temp">--°C</div>
+<div id="wtext">Loading weather…</div>
+</div>
+</div>
+<div id="prayerrow">
+<div style="display:flex;align-items:center;gap:10px">
+<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#E9C877" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21v-7c0-4 3-7 7-9 4 2 7 5 7 9v7"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="12" y1="1.5" x2="12" y2="5"/></svg>
+<div id="prayer">Prayer times…</div>
+</div>
+<div class="bism" dir="rtl" lang="ar">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>
+</div>
+</section>
+
+<!-- SPEED -->
+<section class="glass" id="p-speed">
+<div id="gauge">
+<svg width="198" height="198" viewBox="0 0 220 220" aria-hidden="true">
+<defs><linearGradient id="gold" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#9C7A33"/><stop offset=".6" stop-color="#E9C877"/><stop offset="1" stop-color="#FFF1BF"/></linearGradient></defs>
+<path d="M36.5 183.5 A104 104 0 1 1 183.5 183.5" pathLength="270" fill="none" stroke="#E9C877" stroke-opacity=".45" stroke-width="6" stroke-dasharray="1.4 8.6"/>
+<path d="M42.1 177.9 A96 96 0 1 1 177.9 177.9" pathLength="100" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="14" stroke-linecap="round"/>
+<path id="gfill" d="M42.1 177.9 A96 96 0 1 1 177.9 177.9" pathLength="100" fill="none" stroke="url(#gold)" stroke-width="14" stroke-linecap="round" stroke-dasharray="0.01 100"/>
+</svg>
+<div id="gnum"><div id="speed">0</div><div id="gunit">KM/H</div></div>
+</div>
+<div id="sright">
+<div style="display:flex;align-items:center;gap:14px">
+<div id="hdgbox" class="glassbtn"><svg id="hdgArrow" width="34" height="34" viewBox="0 0 24 24" fill="#E9C877" stroke="#E9C877" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 L18 20 L12 16 L6 20 Z"/></svg></div>
+<div style="font-size:16px;font-weight:500;line-height:22px;color:#BFD6CB">Heading <b id="hdgText" style="color:#FFF6D8">N 0°</b><br>Trip <b id="tripText" style="color:#FFF6D8">0.0 km</b></div>
+</div>
+<div style="display:flex;gap:12px">
+<button class="chip glassbtn" id="btnMax" aria-label="Max speed. Tap to reset trip"><span class="l">MAX</span><span class="v"><span id="maxv">0</span> <small>km/h</small></span></button>
+<button class="chip glassbtn" id="btnAvg" aria-label="Average speed. Tap to reset trip"><span class="l">AVG</span><span class="v"><span id="avgv">0</span> <small>km/h</small></span></button>
+</div>
+</div>
+</section>
+
+<!-- MUSIC -->
+<section class="glass" id="p-music">
+<div id="artwrap">
+<svg class="star" width="200" height="200" viewBox="0 0 200 200" aria-hidden="true"><g fill="none" stroke="#E9C877" stroke-opacity=".55" stroke-width="1.2"><rect x="45" y="45" width="110" height="110"/><rect x="45" y="45" width="110" height="110" transform="rotate(45 100 100)"/><circle cx="100" cy="100" r="76"/><circle cx="100" cy="100" r="54"/></g></svg>
+<div id="artar" lang="ar">الله</div>
+<img id="artimg" alt="">
+<div id="ytbox"><div id="ytp"></div></div>
+</div>
+<div id="minfo">
+<div id="srcs">
+<button class="src glassbtn" data-src="yt">YouTube</button>
+<button class="src glassbtn" data-src="ytm">YT Music</button>
+<button class="src glassbtn" data-src="radio">Radio</button>
+</div>
+<div>
+<button id="title">Tap to choose</button>
+<div id="sub">Radio</div>
+</div>
+<div id="prog"><span class="t" id="tc">0:00</span><div id="bar"><div id="barfill"></div></div><span class="t r" id="td">0:00</span></div>
+<div id="ctrl">
+<button class="glassbtn" id="btnPrev" aria-label="Previous"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg></button>
+<button class="goldbtn" id="btnPlay" aria-label="Play or pause"><svg id="playIcon" width="30" height="30" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><polygon points="7 4 20 12 7 20 7 4"/></svg></button>
+<button class="glassbtn" id="btnNext" aria-label="Next"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg></button>
+<button class="glassbtn" id="btnApps" aria-label="Open apps"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/></svg><span>APPS</span></button>
+</div>
+</div>
+</section>
+
+<!-- DRAWER (library / apps) -->
+<section class="glass" id="drawer">
+<div id="dhead"><div id="dtitle">Library</div><button class="glassbtn" id="dclose" aria-label="Close"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+<div id="dtools"><input class="inp" id="dq" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="goldbtn gobtn" id="dgo">Go</button></div>
+<div id="dlist"></div>
+</section>
+
+</div>
+
+<!-- MAP -->
+<section class="glass" id="mapwrap">
+<div id="map"></div>
+
+<div id="card" class="glass dark">
+<div id="cardIcon" class="goldbtn"><svg id="cardSvg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg></div>
+<div id="cardTxt"><div id="cardBig">Locating…</div><div id="cardSmall">Waiting for GPS</div></div>
+</div>
+
+<div id="tools">
+<button class="glassbtn dark" id="btnSearch" aria-label="Search destination"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg></button>
+<button class="glassbtn dark" id="btnIn" aria-label="Zoom in"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+<button class="glassbtn dark" id="btnOut" aria-label="Zoom out"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+<button class="glassbtn dark on" id="btnRecenter" aria-label="Recenter on my location"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/></svg></button>
+<button class="glassbtn dark" id="btnFs" aria-label="Fullscreen"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+</div>
+
+<div id="strip" class="glass dark">
+<button id="stripIdle" aria-label="Search destination">
+<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#E9C877" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+<div><div class="big">Where to?</div><div class="sm">Search a destination to start navigation</div></div>
+</button>
+<div id="stripNav">
+<div class="st"><div class="b"><span id="sMin">0</span> <small>min</small></div><div class="s">Time left</div></div>
+<div class="sep"></div>
+<div class="st"><div class="b" id="sKm">0 km</div><div class="s">Distance left</div></div>
+<div class="sep"></div>
+<div class="st"><div class="b" id="sEta">--:--</div><div class="s">Arrival</div></div>
+<button class="glassbtn" id="btnCancel" aria-label="Cancel navigation"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
+</div>
+</div>
+<div id="attr">Map © OpenStreetMap contributors © CARTO</div>
+
+<div id="search" class="glass">
+<div id="qrow"><input class="inp" id="q" type="text" placeholder="Search destination…" autocomplete="off" spellcheck="false"><button class="goldbtn gobtn" id="qgo">Search</button><button class="glassbtn" id="qclose" style="width:52px;height:52px;border-radius:26px" aria-label="Close search"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+<div id="results"></div>
+</div>
+<div id="toast" class="glass dark"></div>
+</section>
+</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(()=>{
+'use strict';
+const $=id=>document.getElementById(id);
+const store={get(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hav=(a,b,c,d)=>{const r=Math.PI/180,p=(c-a)*r,q=(d-b)*r,k=Math.sin(p/2)**2+Math.cos(a*r)*Math.cos(c*r)*Math.sin(q/2)**2;return 12742000*Math.asin(Math.sqrt(k))};
+const pad=n=>String(n).padStart(2,'0');
+const hm=d=>d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+const mmss=s=>{s=Math.max(0,Math.floor(s||0));return Math.floor(s/60)+':'+pad(s%60)};
+const TZ=Intl.DateTimeFormat().resolvedOptions().timeZone;
+let map=null;
+
+/* ---------- stage scaling ---------- */
+function fit(){const s=Math.min(innerWidth/1280,innerHeight/720);$('stage').style.transform=`translate(-50%,-50%) scale(${s})`;if(map)map.invalidateSize()}
+addEventListener('resize',fit);fit();
+
+/* ---------- toast ---------- */
+let toastT=0;
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),3200)}
+
+/* ---------- clock ---------- */
+function tick(){
+ const d=new Date();
+ $('time').textContent=hm(d);
+ $('date').textContent=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+ try{$('hijri').textContent=new Intl.DateTimeFormat('en-u-ca-islamic-umalqura',{day:'numeric',month:'long',year:'numeric'}).format(d)}catch(e){}
+ updatePrayerText();
+}
+setInterval(tick,5000);
+
+/* ---------- position state ---------- */
+let pos={lat:3.139,lon:101.6869},hasFix=false,hdg=0,city='',street='',place='';
+
+/* ---------- weather ---------- */
+const WX_NAME={0:'Clear sky',1:'Mostly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',56:'Freezing drizzle',57:'Freezing drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',66:'Freezing rain',67:'Freezing rain',71:'Light snow',73:'Snow',75:'Heavy snow',77:'Snow grains',80:'Rain showers',81:'Rain showers',82:'Violent showers',85:'Snow showers',86:'Snow showers',95:'Thunderstorm',96:'Thunderstorm',99:'Thunderstorm'};
+const ICON={
+ sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+ cloud:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
+ rain:'<path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/><path d="M8 19v2M8 13v2M16 19v2M16 13v2M12 21v2M12 15v2"/>',
+ storm:'<path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"/><path d="M13 11l-4 6h6l-4 6"/>'};
+let wx={t:null,code:null};
+function wxIcon(c){if(c===0)return'sun';if(c>=95)return'storm';if((c>=51&&c<=67)||(c>=80&&c<=82))return'rain';return'cloud'}
+function showWeather(){
+ if(wx.t==null)return;
+ $('temp').textContent=Math.round(wx.t)+'°C';
+ $('wtext').textContent=(WX_NAME[wx.code]||'Cloudy')+' · '+(city||'Your location');
+ $('wsvg').innerHTML=ICON[wxIcon(wx.code)];
+}
+$('wsvg').innerHTML=ICON.cloud;
+async function loadWeather(){
+ try{
+  const j=await(await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${pos.lat}&longitude=${pos.lon}&current=temperature_2m,weather_code&timezone=auto`)).json();
+  wx={t:j.current.temperature_2m,code:j.current.weather_code};showWeather();
+ }catch(e){$('wtext').textContent='Weather unavailable'}
+}
+setInterval(()=>{if(hasFix)loadWeather()},15*60*1000);
+
+/* ---------- prayer times (Aladhan) ---------- */
+let prayers=null,prayerDay='',pBusy=false,pLast=0;
+async function loadPrayer(){
+ if(pBusy||Date.now()-pLast<60000)return;
+ pBusy=true;pLast=Date.now();
+ const d=new Date(),method=TZ==='Asia/Kuala_Lumpur'?17:3;
+ try{
+  const j=await(await fetch(`https://api.aladhan.com/v1/timings/${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}?latitude=${pos.lat}&longitude=${pos.lon}&method=${method}`)).json();
+  const t=j.data.timings;
+  prayers=['Fajr','Dhuhr','Asr','Maghrib','Isha'].map(n=>{const [h,m]=t[n].slice(0,5).split(':').map(Number);const x=new Date(d);x.setHours(h,m,0,0);return{n,x}});
+  prayerDay=d.toDateString();
+ }catch(e){}
+ pBusy=false;updatePrayerText();
+}
+function updatePrayerText(){
+ const el=$('prayer');
+ if(!prayers){el.textContent='Prayer times…';return}
+ const now=new Date();
+ if(now.toDateString()!==prayerDay){loadPrayer();}
+ let nx=prayers.find(p=>p.x>now);
+ if(!nx)nx={n:'Fajr',x:new Date(prayers[0].x.getTime()+864e5)};
+ const mins=Math.max(0,Math.round((nx.x-now)/60000)),h=Math.floor(mins/60),m=mins%60;
+ el.innerHTML=`${esc(nx.n)} <b>${hm(nx.x)}</b> <span class="m">· in ${h?h+'h ':''}${m}m</span>`;
+}
+
+/* ---------- speed / trip ---------- */
+const trip={dist:0,mov:0,max:0};
+let lastP=null;
+function dir8(h){return['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8]}
+function showSpeed(k){$('speed').textContent=Math.round(k);$('gfill').setAttribute('stroke-dasharray',`${Math.max(.01,Math.min(k/200,1)*100)} 100`)}
+function showStats(){
+ const avg=trip.mov>0?(trip.dist/1000)/(trip.mov/3.6e6):0;
+ $('maxv').textContent=Math.round(trip.max);$('avgv').textContent=Math.round(avg);
+ $('tripText').textContent=(trip.dist/1000).toFixed(1)+' km';
+ $('hdgText').textContent=dir8(hdg)+' '+Math.round(hdg)+'°';
+ $('hdgArrow').style.transform=`rotate(${hdg}deg)`;
+}
+function resetTrip(){trip.dist=0;trip.mov=0;trip.max=0;showStats();toast('Trip reset')}
+$('btnMax').onclick=resetTrip;$('btnAvg').onclick=resetTrip;
+
+function onPos(p){
+ const c=p.coords,t=p.timestamp||Date.now(),lat=c.latitude,lon=c.longitude;
+ let v=c.speed;
+ if((v==null||isNaN(v))&&lastP){const dt=(t-lastP.t)/1000;v=dt>0?hav(lastP.lat,lastP.lon,lat,lon)/dt:0}
+ let kmh=(v||0)*3.6;if(kmh<3)kmh=0;
+ if(lastP){
+  const dt=t-lastP.t,dm=hav(lastP.lat,lastP.lon,lat,lon);
+  if(dm>4&&(c.accuracy||0)<60&&dt<30000)trip.dist+=dm;
+  if(kmh>0&&dt<30000)trip.mov+=dt;
+ }
+ if(kmh>trip.max&&kmh<300)trip.max=kmh;
+ if(c.heading!=null&&!isNaN(c.heading)&&kmh>5)hdg=c.heading;
+ lastP={lat,lon,t};
+ const first=!hasFix;pos={lat,lon};hasFix=true;
+ showSpeed(kmh);showStats();moveCar();
+ if(first){loadWeather();loadPrayer();geoName(true)}else geoName(false);
+ navTick();
+}
+function onGpsErr(e){toast('GPS unavailable. Allow location access (needs HTTPS).')}
+
+/* ---------- map ---------- */
+let car=null,follow=true,routePane=null;
+function initMap(){
+ map=L.map('map',{zoomControl:false,attributionControl:false,zoomSnap:1,preferCanvas:true,fadeAnimation:false,markerZoomAnimation:false}).setView([pos.lat,pos.lon],16);
+ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',{subdomains:'abcd',maxZoom:19,updateWhenIdle:true,keepBuffer:1}).addTo(map);
+ routePane=map.createPane('route');routePane.style.zIndex=460;
+ const icon=L.divIcon({className:'',iconSize:[60,60],iconAnchor:[30,30],html:'<div id="car"><svg width="60" height="60" viewBox="-30 -30 60 60"><circle r="28" fill="#E9C877" fill-opacity=".18"/><circle r="18" fill="#E9C877" fill-opacity=".2"/><path d="M0 -20 L14 14 L0 6 L-14 14 Z" fill="#FFF1BF" stroke="#0A1F18" stroke-width="2.5" stroke-linejoin="round"/></svg></div>'});
+ car=L.marker([pos.lat,pos.lon],{icon,interactive:false,keyboard:false,zIndexOffset:1000}).addTo(map);
+ map.on('dragstart',()=>{follow=false;$('btnRecenter').classList.remove('on')});
+}
+function moveCar(){
+ if(!map)return;
+ car.setLatLng([pos.lat,pos.lon]);
+ const el=document.getElementById('car');if(el)el.style.transform=`rotate(${hdg}deg)`;
+ if(follow)map.setView([pos.lat,pos.lon],map.getZoom(),{animate:false});
+}
+function recenter(){follow=true;$('btnRecenter').classList.add('on');map.setView([pos.lat,pos.lon],Math.max(map.getZoom(),15))}
+$('btnRecenter').onclick=recenter;
+$('btnIn').onclick=()=>map.zoomIn();
+$('btnOut').onclick=()=>map.zoomOut();
+$('btnFs').onclick=()=>{
+ const e=document.documentElement;
+ if(document.fullscreenElement){document.exitFullscreen();return}
+ if(e.requestFullscreen)e.requestFullscreen().then(()=>{if(screen.orientation&&screen.orientation.lock)screen.orientation.lock('landscape').catch(()=>{})}).catch(()=>{});
+};
+
+/* ---------- reverse geocode (street name) ---------- */
+let lastGeo={t:0,lat:0,lon:0};
+async function geoName(force){
+ const now=Date.now();
+ if(!force&&(now-lastGeo.t<30000||hav(pos.lat,pos.lon,lastGeo.lat,lastGeo.lon)<150))return;
+ lastGeo={t:now,lat:pos.lat,lon:pos.lon};
+ try{
+  const j=await(await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&accept-language=en&lat=${pos.lat}&lon=${pos.lon}`)).json();
+  const a=j.address||{};
+  street=a.road||a.pedestrian||a.neighbourhood||a.suburb||'';
+  place=a.suburb||a.city_district||a.city||a.town||a.state||'';
+  city=a.city||a.town||a.state||place;
+  showWeather();if(!navigating)idleCard();
+ }catch(e){}
+}
+
+/* ---------- card + strip ---------- */
+const PIN='<path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>';
+const ARROW='<line x1="12" y1="20" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>';
+function idleCard(){
+ $('cardSvg').innerHTML=PIN;$('cardSvg').style.transform='';
+ $('cardBig').textContent=street||(hasFix?'Driving':'Locating…');
+ $('cardSmall').textContent=place||(hasFix?'':'Waiting for GPS');
+}
+
+/* ---------- search + routing (Nominatim + OSRM) ---------- */
+let navigating=false,route=null,steps=[],stepIdx=1,dest=null,rCoords=[],glow=null,line=null,destMk=null,lastRoute=0,found=[];
+function openSearch(){$('search').classList.add('open');$('q').focus()}
+function closeSearch(){$('search').classList.remove('open');$('q').blur()}
+$('btnSearch').onclick=openSearch;$('stripIdle').onclick=openSearch;$('qclose').onclick=closeSearch;
+$('qgo').onclick=doSearch;
+$('q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch()});
+async function doSearch(){
+ const q=$('q').value.trim();if(!q)return;
+ $('results').innerHTML='<div class="empty">Searching…</div>';
+ try{
+  const u=`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=en&q=${encodeURIComponent(q)}&viewbox=${pos.lon-1},${pos.lat+1},${pos.lon+1},${pos.lat-1}`;
+  found=await(await fetch(u)).json();
+  $('results').innerHTML=found.length?found.map((r,i)=>{const p=r.display_name.split(', ');return`<button class="row glassbtn" data-i="${i}"><span class="a">${esc(p[0])}</span><span class="b">${esc(p.slice(1,4).join(', '))}</span></button>`}).join(''):'<div class="empty">No results. Try another name.</div>';
+ }catch(e){$('results').innerHTML='<div class="empty">Search unavailable right now.</div>'}
+}
+$('results').addEventListener('click',e=>{
+ const b=e.target.closest('.row');if(!b)return;
+ const r=found[+b.dataset.i];if(!r)return;
+ dest={lat:+r.lat,lon:+r.lon,name:r.display_name.split(', ')[0]};
+ closeSearch();fetchRoute(true);
+});
+async function fetchRoute(fit){
+ if(!dest)return;
+ lastRoute=Date.now();toast('Calculating route…');
+ try{
+  const r=await(await fetch(`https://router.project-osrm.org/route/v1/driving/${pos.lon},${pos.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson&steps=true`)).json();
+  if(r.code!=='Ok'||!r.routes.length){toast('No route found');return}
+  route=r.routes[0];steps=route.legs[0].steps;stepIdx=1;navigating=true;
+  rCoords=route.geometry.coordinates.map(c=>[c[1],c[0]]);
+  clearRouteLayers();
+  glow=L.polyline(rCoords,{pane:'route',color:'#E9C877',weight:22,opacity:.35,lineCap:'round',lineJoin:'round',interactive:false}).addTo(map);
+  line=L.polyline(rCoords,{pane:'route',color:'#F6DF9B',weight:9,opacity:1,lineCap:'round',lineJoin:'round',interactive:false}).addTo(map);
+  destMk=L.circleMarker([dest.lat,dest.lon],{pane:'route',radius:10,color:'#fff',weight:3,fillColor:'#E9C877',fillOpacity:1,interactive:false}).addTo(map);
+  $('stripIdle').style.display='none';$('stripNav').style.display='flex';
+  if(fit){follow=false;map.fitBounds(line.getBounds(),{padding:[110,110]});setTimeout(recenter,5000)}
+  navTick();
+ }catch(e){toast('Routing unavailable right now')}
+}
+function clearRouteLayers(){[glow,line,destMk].forEach(l=>{if(l)map.removeLayer(l)});glow=line=destMk=null}
+function endNav(){navigating=false;route=null;steps=[];rCoords=[];dest=null;clearRouteLayers();$('stripNav').style.display='none';$('stripIdle').style.display='flex';idleCard()}
+$('btnCancel').onclick=endNav;
+
+function instr(s){
+ const m=s.maneuver,t=m.type,mod=m.modifier||'',on=s.name?' onto '+s.name:'';
+ if(t==='arrive')return'Arrive at '+(dest?dest.name:'destination');
+ if(t==='roundabout'||t==='rotary'||t==='roundabout turn')return'Enter the roundabout'+on;
+ if(mod==='uturn')return'Make a U-turn'+on;
+ if(mod==='straight'||t==='new name'||t==='continue')return'Continue straight'+on;
+ if(t==='merge')return'Merge'+on;
+ if(t==='fork')return'Keep '+(mod.includes('left')?'left':'right')+' at the fork'+on;
+ return'Turn '+(mod||'ahead')+on;
+}
+function rot(mod){return({'left':-90,'right':90,'slight left':-45,'slight right':45,'sharp left':-135,'sharp right':135,'uturn':180,'straight':0}[mod])||0}
+const fmtD=m=>m<1000?Math.round(m/10)*10+' m':(m/1000).toFixed(1)+' km';
+function segDist(p,a,b){
+ const k=Math.cos(p[0]*Math.PI/180);
+ const ax=(a[1]-p[1])*k*111320,ay=(a[0]-p[0])*111320,bx=(b[1]-p[1])*k*111320,by=(b[0]-p[0])*111320;
+ const dx=bx-ax,dy=by-ay,L=dx*dx+dy*dy;let t=L?-(ax*dx+ay*dy)/L:0;t=Math.max(0,Math.min(1,t));
+ return Math.hypot(ax+t*dx,ay+t*dy);
+}
+function navTick(){
+ if(!navigating||!route)return;
+ let s=steps[stepIdx];if(!s){endNav();return}
+ let d=hav(pos.lat,pos.lon,s.maneuver.location[1],s.maneuver.location[0]);
+ while(d<30&&stepIdx<steps.length-1){stepIdx++;s=steps[stepIdx];d=hav(pos.lat,pos.lon,s.maneuver.location[1],s.maneuver.location[0])}
+ if(s.maneuver.type==='arrive'&&d<35){toast('You have arrived');endNav();return}
+ let rem=d;for(let k=stepIdx;k<steps.length;k++)rem+=steps[k].distance;
+ const secs=rem/(route.distance/Math.max(route.duration,1));
+ $('cardSvg').innerHTML=s.maneuver.type==='arrive'?PIN:ARROW;
+ $('cardSvg').style.transform=`rotate(${s.maneuver.type==='arrive'?0:rot(s.maneuver.modifier)}deg)`;
+ $('cardBig').textContent=fmtD(d);$('cardSmall').textContent=instr(s);
+ $('sMin').textContent=Math.max(1,Math.round(secs/60));
+ $('sKm').textContent=(rem/1000).toFixed(1)+' km';
+ $('sEta').textContent=hm(new Date(Date.now()+secs*1000));
+ if(Date.now()-lastRoute>15000){
+  let min=1e9;for(let i=0;i<rCoords.length-1;i++){const q=segDist([pos.lat,pos.lon],rCoords[i],rCoords[i+1]);if(q<min)min=q}
+  if(min>150){toast('Off route. Recalculating…');fetchRoute(false)}
+ }
+}
+
+/* ---------- media ---------- */
+const media={src:store.get('src','radio'),playing:false,radio:{list:[],i:0},cur:null};
+let lib=store.get('lib',[]);
+const audio=new Audio();audio.preload='none';
+let fails=0;
+audio.onplaying=()=>{fails=0;setPlaying(true)};
+audio.onpause=()=>setPlaying(false);
+audio.onerror=()=>{if(media.src!=='radio'||!audio.src)return;if(++fails<=4){toast('Stream unavailable, trying next…');setTimeout(()=>step(1),700)}else{toast('Stations are not responding');fails=0}};
+
+const PLAY='<polygon points="7 4 20 12 7 20 7 4"/>',PAUSE='<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+function setPlaying(b){
+ media.playing=b;$('playIcon').innerHTML=b?PAUSE:PLAY;
+ if('mediaSession' in navigator)navigator.mediaSession.playbackState=b?'playing':'paused';
+}
+function setMeta(t,s,art){
+ $('title').textContent=t;$('sub').textContent=s;
+ const im=$('artimg');
+ if(art&&art.startsWith('https://')){im.onerror=()=>{im.style.display='none'};im.onload=()=>{im.style.display='block'};im.src=art}else{im.style.display='none'}
+ if('mediaSession' in navigator&&window.MediaMetadata)navigator.mediaSession.metadata=new MediaMetadata({title:t,artist:s});
+}
+if('mediaSession' in navigator){
+ const ms=navigator.mediaSession;
+ const set=(a,f)=>{try{ms.setActionHandler(a,f)}catch(e){}};
+ set('play',playPause);set('pause',playPause);set('nexttrack',()=>step(1));set('previoustrack',()=>step(-1));
+}
+const NAMES={yt:'YouTube',ytm:'YouTube Music',radio:'Radio'};
+function setSource(s,keep){
+ if(!keep){audio.pause();if(yt&&ytReady&&ytLoaded)try{yt.pauseVideo()}catch(e){}}
+ media.src=s;store.set('src',s);
+ document.querySelectorAll('.src').forEach(b=>b.classList.toggle('on',b.dataset.src===s));
+ const isYT=s!=='radio';
+ $('ytbox').style.display=isYT?'block':'none';
+ $('artar').style.display=isYT?'none':'flex';
+ setPlaying(false);
+ if(isYT){
+  $('barfill').style.width='0';$('tc').textContent='0:00';$('td').textContent='0:00';
+  if(media.cur&&media.cur.s===s&&ytLoaded){/* keep */}
+  setMeta('Tap to add a link',NAMES[s]);
+  $('title').textContent=media.cur&&media.cur.s===s&&media.cur.t?media.cur.t:'Tap to add a link';
+  loadYTApi();
+ }else{
+  $('barfill').style.width='100%';$('tc').textContent='LIVE';$('td').textContent='';
+  const c=media.radio.list[media.radio.i];
+  if(c)setMeta(c.name,radioSub(c),c.favicon);else setMeta('Tap to pick a station','Radio');
+  if(!media.radio.list.length)loadStations();
+ }
+}
+document.querySelectorAll('.src').forEach(b=>b.onclick=()=>setSource(b.dataset.src));
+
+/* radio */
+const RB=['https://de1.api.radio-browser.info','https://nl1.api.radio-browser.info','https://at1.api.radio-browser.info'];
+async function rb(path){for(const b of RB){try{const r=await fetch(b+path);if(r.ok)return await r.json()}catch(e){}}throw new Error('radio')}
+function cc(){return TZ==='Asia/Kuala_Lumpur'?'MY':(navigator.language.split('-')[1]||'MY').toUpperCase()}
+const radioSub=s=>(s.tags||'').split(',').filter(Boolean).slice(0,2).join(' · ')||s.country||'Live radio';
+async function loadStations(q){
+ try{
+  const p=q?`/json/stations/search?name=${encodeURIComponent(q)}&limit=60&hidebroken=true&order=clickcount&reverse=true`:`/json/stations/search?countrycode=${cc()}&limit=80&hidebroken=true&order=clickcount&reverse=true`;
+  const l=(await rb(p)).filter(s=>(s.url_resolved||'').startsWith('https://'));
+  media.radio.list=l;media.radio.i=0;
+  if(!l.length)toast('No HTTPS stations found');
+  if(media.src==='radio'&&l[0]&&!media.playing)setMeta(l[0].name,radioSub(l[0]),l[0].favicon);
+  renderDrawer();return l;
+ }catch(e){toast('Could not load radio stations');return[]}
+}
+function playStation(i){
+ const l=media.radio.list;if(!l.length)return;
+ media.radio.i=(i+l.length)%l.length;
+ const s=l[media.radio.i];
+ audio.src=s.url_resolved;
+ audio.play().catch(()=>toast('Tap play to start'));
+ setMeta(s.name,radioSub(s),s.favicon);
+ $('barfill').style.width='100%';$('tc').textContent='LIVE';$('td').textContent='';
+}
+
+/* youtube (IFrame API) */
+let yt=null,ytReady=false,ytLoaded=false,pendingYT=null;
+function loadYTApi(){
+ if(yt||document.getElementById('ytapi'))return;
+ window.onYouTubeIframeAPIReady=initYT;
+ const s=document.createElement('script');s.id='ytapi';s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
+}
+function initYT(){
+ yt=new YT.Player('ytp',{width:200,height:200,playerVars:{playsinline:1,controls:0,rel:0,modestbranding:1,iv_load_policy:3,origin:location.origin},
+  events:{onReady:()=>{ytReady=true;if(pendingYT){const p=pendingYT;pendingYT=null;playYT(p)}},onStateChange:onYTState,onError:()=>toast('This video cannot be played here')}});
+}
+function onYTState(e){
+ if(media.src==='radio')return;
+ if(e.data===1){
+  setPlaying(true);
+  try{const d=yt.getVideoData();if(d&&d.title){setMeta(d.title,d.author||NAMES[media.src]);if(media.cur){media.cur.t=d.title;const it=lib.find(x=>x.u===media.cur.u);if(it){it.t=d.title;store.set('lib',lib)}}}}catch(x){}
+ }else if(e.data===2||e.data===0)setPlaying(false);
+}
+function parseYT(input){
+ input=input.trim();let v=null,list=null;
+ if(/^[\w-]{11}$/.test(input))return{v:input,list:null};
+ if(/^(PL|OLAK|UU|FL)[\w-]+$/.test(input))return{v:null,list:input};
+ try{
+  const u=new URL(input.includes('://')?input:'https://'+input);
+  if(u.hostname==='youtu.be')v=u.pathname.slice(1);
+  else{v=u.searchParams.get('v');if(!v&&u.pathname.startsWith('/shorts/'))v=u.pathname.split('/')[2]}
+  list=u.searchParams.get('list');
+ }catch(e){}
+ if(list&&/^RD/.test(list))list=null;
+ return{v,list};
+}
+function playYT(item){
+ const {v,list}=parseYT(item.u);
+ if(!v&&!list){toast('That does not look like a YouTube link');return}
+ if(!yt||!ytReady){pendingYT=item;media.cur=item;loadYTApi();toast('Loading player…');return}
+ ytLoaded=true;media.cur=item;
+ if(list)yt.loadPlaylist({list,listType:'playlist',index:0});else yt.loadVideoById(v);
+ setMeta(item.t||'Loading…',NAMES[item.s]||'YouTube');
+}
+setInterval(()=>{
+ if(media.src==='radio'||!yt||!ytReady||!ytLoaded)return;
+ try{const c=yt.getCurrentTime(),d=yt.getDuration();$('tc').textContent=mmss(c);$('td').textContent=mmss(d);$('barfill').style.width=(d>0?Math.min(c/d,1)*100:0)+'%'}catch(e){}
+},1000);
+
+/* transport */
+function playPause(){
+ if(media.src==='radio'){
+  if(!media.radio.list.length){loadStations().then(()=>playStation(0));return}
+  if(audio.paused)playStation(media.radio.i);else audio.pause();
+ }else{
+  if(!ytReady||!ytLoaded){openDrawer('lib');return}
+  try{yt.getPlayerState()===1?yt.pauseVideo():yt.playVideo()}catch(e){}
+ }
+}
+function savedList(){return lib.filter(x=>x.s===media.src)}
+function step(dir){
+ if(media.src==='radio'){playStation(media.radio.i+dir);return}
+ if(!ytReady||!ytLoaded){openDrawer('lib');return}
+ try{
+  const pl=yt.getPlaylist&&yt.getPlaylist();
+  if(pl&&pl.length){dir>0?yt.nextVideo():yt.previousVideo();return}
+ }catch(e){}
+ const l=savedList();if(!l.length)return;
+ const i=Math.max(0,l.findIndex(x=>media.cur&&x.u===media.cur.u));
+ playYT(l[(i+dir+l.length)%l.length]);
+}
+$('btnPlay').onclick=playPause;
+$('btnNext').onclick=()=>step(1);
+$('btnPrev').onclick=()=>step(-1);
+$('title').onclick=()=>openDrawer('lib');
+
+/* ---------- drawer: library + apps ---------- */
+const APPS=[
+ ['YouTube Music','com.google.android.apps.youtube.music','note'],['YouTube','com.google.android.youtube','play'],['Spotify','com.spotify.music','note'],
+ ['Waze','com.waze','nav'],['Google Maps','com.google.android.apps.maps','nav'],['Phone','com.google.android.dialer','phone'],
+ ['Messages','com.google.android.apps.messaging','msg'],['Settings','com.android.settings','gear']];
+const AI={
+ note:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+ play:'<rect x="2" y="5" width="20" height="14" rx="4"/><polygon points="10 9 16 12 10 15 10 9"/>',
+ nav:'<polygon points="3 11 22 2 13 21 11 13 3 11"/>',
+ phone:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>',
+ msg:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'};
+let allApps=null;
+function getAllApps(){if(allApps)return allApps;try{if(window.NoorNative&&NoorNative.listApps)allApps=JSON.parse(NoorNative.listApps())}catch(e){}return allApps||[]}
+function openApp(pkg){if(window.NoorNative&&NoorNative.openApp){NoorNative.openApp(pkg);return}location.href=`intent://#Intent;package=${pkg};S.browser_fallback_url=${encodeURIComponent('https://play.google.com/store/apps/details?id='+pkg)};end`}
+let dMode=null;
+function openDrawer(m){dMode=m;$('drawer').classList.add('open');renderDrawer();if(m==='lib'&&media.src==='radio'&&!media.radio.list.length)loadStations()}
+function closeDrawer(){dMode=null;$('drawer').classList.remove('open');$('dq').blur()}
+$('dclose').onclick=closeDrawer;
+$('btnApps').onclick=()=>openDrawer('apps');
+function renderDrawer(){
+ if(!dMode)return;
+ const L=$('dlist'),tools=$('dtools');
+ if(dMode==='apps'){
+  $('dtitle').textContent='Apps';tools.style.display='none';L.className='grid';
+  const all=getAllApps();
+  if(all.length){
+   const fav=APPS.map(a=>a[1]);
+   const sorted=all.slice().sort((x,y)=>{const a=fav.indexOf(x.p),b=fav.indexOf(y.p);return(a<0?999:a)-(b<0?999:b)});
+   L.innerHTML=sorted.map(a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="data:image/png;base64,${a.i}" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`).join('');
+  }else{
+   L.innerHTML=APPS.map(a=>`<button class="tile glassbtn" data-pkg="${esc(a[1])}"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${AI[a[2]]}</svg><span>${esc(a[0])}</span></button>`).join('');
+  }
+  return;
+ }
+ tools.style.display='flex';L.className='';
+ if(media.src==='radio'){
+  $('dtitle').textContent='Radio stations';$('dq').placeholder='Search stations (e.g. Hijrah, Nasyid, BFM)';$('dgo').textContent='Search';
+  const l=media.radio.list;
+  L.innerHTML=l.length?l.map((s,i)=>`<button class="row glassbtn${i===media.radio.i?' on':''}" data-st="${i}"><span class="a">${esc(s.name)}</span><span class="b">${esc(radioSub(s))}</span></button>`).join(''):'<div class="empty">Loading stations…</div>';
+ }else{
+  $('dtitle').textContent=NAMES[media.src]+' library';$('dq').placeholder=media.src==='ytm'?'Paste a YouTube Music link':'Paste a YouTube link or playlist';$('dgo').textContent='Play';
+  const l=savedList();
+  let h=media.src==='ytm'?'<button class="row glassbtn" data-pkg="com.google.android.apps.youtube.music"><span class="a">Open the YouTube Music app</span><span class="b">Use your own library and Premium in the full app</span></button>':'';
+  h+=l.length?l.map(x=>`<div style="display:flex;gap:8px;flex-shrink:0"><button class="row glassbtn${media.cur&&media.cur.u===x.u?' on':''}" style="flex:1;min-width:0" data-u="${esc(x.u)}"><span class="a">${esc(x.t||x.u)}</span><span class="b">${esc(x.u)}</span></button><button class="glassbtn" style="width:60px;border-radius:18px;flex-shrink:0" aria-label="Remove" data-del="${esc(x.u)}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>`).join(''):'<div class="empty">Paste a link above to play it. Links you play are saved here for one-tap access.</div>';
+  L.innerHTML=h;
+ }
+}
+$('dlist').addEventListener('click',e=>{
+ const t=e.target.closest('button');if(!t)return;
+ if(t.dataset.pkg){openApp(t.dataset.pkg);return}
+ if(t.dataset.st!=null){playStation(+t.dataset.st);closeDrawer();return}
+ if(t.dataset.del){lib=lib.filter(x=>!(x.u===t.dataset.del&&x.s===media.src));store.set('lib',lib);renderDrawer();return}
+ if(t.dataset.u){const it=lib.find(x=>x.u===t.dataset.u&&x.s===media.src);if(it){playYT(it);closeDrawer()}}
+});
+function drawerGo(){
+ const v=$('dq').value.trim();if(!v)return;
+ if(media.src==='radio'){loadStations(v);return}
+ const p=parseYT(v);if(!p.v&&!p.list){toast('That does not look like a YouTube link');return}
+ let it=lib.find(x=>x.u===v&&x.s===media.src);
+ if(!it){it={u:v,s:media.src,t:''};lib.unshift(it);lib=lib.slice(0,40);store.set('lib',lib)}
+ $('dq').value='';playYT(it);closeDrawer();
+}
+$('dgo').onclick=drawerGo;
+$('dq').addEventListener('keydown',e=>{if(e.key==='Enter')drawerGo()});
+
+/* ---------- wake lock ---------- */
+let wl=null;
+async function wake(){try{if(navigator.wakeLock)wl=await navigator.wakeLock.request('screen')}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')wake()});
+addEventListener('pointerdown',wake,{once:true});
+
+/* ---------- optional glass blur: long-press the clock (off by default for speed) ---------- */
+(function(){
+ const apply=()=>document.body.classList.toggle('fx',!!store.get('fx',false));
+ apply();let t=0;const el=$('time');
+ el.addEventListener('pointerdown',()=>{t=setTimeout(()=>{store.set('fx',!store.get('fx',false));apply();toast(store.get('fx',false)?'Glass blur ON (looks richer, slower)':'Glass blur OFF (faster)')},900)});
+ ['pointerup','pointerleave','pointercancel'].forEach(e=>el.addEventListener(e,()=>clearTimeout(t)));
+})();
+
+/* ---------- native shell hooks ---------- */
+window.noorBack=()=>{
+ if(dMode){closeDrawer();return true}
+ if($('search').classList.contains('open')){closeSearch();return true}
+ return false;
+};
+if(window.NoorNative)$('btnFs').style.display='none';
+
+/* ---------- start ---------- */
+initMap();tick();idleCard();showStats();showSpeed(0);
+setSource(media.src,true);
+if(new URLSearchParams(location.search).has('demo')){
+ /* ?demo=1 simulates driving, handy for previewing on a computer */
+ let a=0,lat=pos.lat,lon=pos.lon,h=45;
+ setInterval(()=>{
+  a+=.1;const v=(45+35*Math.sin(a))/3.6;
+  lat+=v*Math.cos(h*Math.PI/180)/111320;lon+=v*Math.sin(h*Math.PI/180)/(111320*Math.cos(lat*Math.PI/180));
+  onPos({coords:{latitude:lat,longitude:lon,speed:v,heading:h,accuracy:5},timestamp:Date.now()});
+ },1000);
+}else if(navigator.geolocation){
+ navigator.geolocation.watchPosition(onPos,onGpsErr,{enableHighAccuracy:true,maximumAge:1000,timeout:20000});
+ setTimeout(()=>{if(!hasFix){loadWeather();loadPrayer()}},6000);
+}else onGpsErr();
+})();
+</script>
+</body>
+</html>
