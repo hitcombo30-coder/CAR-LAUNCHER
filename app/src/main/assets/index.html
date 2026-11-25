@@ -113,7 +113,7 @@ svg{display:block}
 
 /* map */
 #mapwrap{position:relative;width:674px;height:688px;overflow:hidden}
-#map{position:absolute;width:970px;height:970px;left:-148px;top:-141px;background:#0A1F19;z-index:0;transform-origin:50% 50%;transition:transform .7s linear;will-change:transform}
+#map{position:absolute;width:970px;height:970px;left:-148px;top:-141px;background:#0A1F19;z-index:0;transform-origin:50% 50%;will-change:transform}
 #map::after{content:"";position:absolute;top:0;left:0;right:0;bottom:0;background:var(--tint,rgba(12,70,52,.12));pointer-events:none;z-index:450}
 .leaflet-container{background:#0A1F19;font-family:Montserrat,sans-serif}
 #car{width:60px;height:60px}
@@ -481,7 +481,7 @@ const OSM='https://tile.openstreetmap.org/{z}/{x}/{y}.png',ESRI='https://server.
 const tl=(u,o)=>L.tileLayer(u,Object.assign({maxZoom:19,updateWhenIdle:true,keepBuffer:1},o||{}));
 const LAYERS={
  street:{name:'Street map',attr:'Map © OpenStreetMap contributors',tint:['rgba(12,70,52,.10)','rgba(0,0,0,.52)'],make:()=>[tl(OSM,{maxNativeZoom:19})]},
- nstreet:{name:'Night street map',attr:'Map © OpenStreetMap contributors',tint:['rgba(0,0,0,0)','rgba(0,0,0,.12)'],make:()=>[tl(OSM,{maxNativeZoom:19,className:'osmdark'})]},
+ nstreet:{name:'Night street map',attr:'Map © OpenStreetMap contributors',tint:['rgba(0,0,0,.35)','rgba(0,0,0,.62)'],make:()=>[tl(OSM,{maxNativeZoom:19})]},
  sat:{name:'Satellite',attr:'Imagery © Esri, Maxar, Earthstar Geographics',tint:['rgba(0,0,0,0)','rgba(0,0,0,.42)'],make:()=>[tl(ESRI+'World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:18}),tl(ESRI+'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:16})]},
  dark:{name:'Minimal dark',attr:'Map © Esri, HERE, Garmin, OpenStreetMap contributors',tint:['rgba(12,70,52,.15)','rgba(0,0,0,0)'],make:()=>[tl(ESRI+'Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:16}),tl(ESRI+'Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:16})]}
 };
@@ -521,13 +521,10 @@ function applyRot(force){
  let tr='rotate(0deg)';
  if(on){
   const d=((hdg-rotA+540)%360)-180;
-  if(!force&&Math.abs(d)<5)return;
+  if(!force&&Math.abs(d)<12)return;
   rotA+=d;tr='rotate('+(-rotA)+'deg)';
  }else rotA=hdg;
- const instant=force||!on;
- if(instant)m.style.transition='none';
  m.style.transform=tr;
- if(instant){void m.offsetWidth;m.style.transition=''}
 }
 function initMap(){
  map=L.map('map',{zoomControl:false,attributionControl:false,zoomSnap:1,preferCanvas:true,fadeAnimation:false,markerZoomAnimation:false}).setView([pos.lat,pos.lon],16);
@@ -691,7 +688,10 @@ function showArt(u,k){
  if(im.dataset.k===k)return;
  im.dataset.k=k;im.onerror=()=>{im.style.display='none'};im.onload=()=>{im.style.display='block'};im.src=u;
 }
+let rmSig='';
 function renderMusic(){
+ const sig=JSON.stringify([view(),ext&&[ext.key,ext.playing,Math.round((ext.pos||0)/1000),ext.dur],!!extArt,media.playing,media.radio.i,media.radio.list.length,access]);
+ if(sig===rmSig)return;rmSig=sig;
  const v=view(),sub=$('sub');
  document.querySelectorAll('.src').forEach(b=>{const s=b.dataset.src;b.classList.toggle('on',s==='radio'?v==='radio':(v==='ext'&&GAPP[ext.pkg]===s))});
  sub.classList.remove('hint');
@@ -874,7 +874,7 @@ function openDrawer(m){dMode=m;$('drawer').classList.add('open');renderDrawer();
 function closeDrawer(){dMode=null;$('drawer').classList.remove('open');$('dq').blur()}
 $('dclose').onclick=closeDrawer;
 $('btnApps').onclick=()=>openDrawer('apps');
-const appTile=a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="data:image/png;base64,${a.i}" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`;
+const appTile=a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="/appicon/${encodeURIComponent(a.p)}.png" loading="lazy" decoding="async" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`;
 function renderDrawer(){
  if(!dMode)return;
  tileTok++;
@@ -968,7 +968,7 @@ if(window.NoorNative)$('btnFs').style.display='none';
 initMap();tick();idleCard();showStats();showSpeed(0);
 {const w0=store.get('wx',null);if(w0&&w0.t!=null){wx=w0;showWeather()}}
 {const p0=store.get('pr',null);if(p0&&p0.zone&&p0.day===new Date().toDateString()&&Array.isArray(p0.t)){prayers=p0.t.map(([n,h,m])=>{const x=new Date();x.setHours(h,m,0,0);return{n,x}});prayerDay=p0.day;prayerZone=p0.zone;hijriStr=p0.hijri||'';zoneToast=p0.zone;updatePrayerText();applyNight();tick()}}
-renderMusic();poll();netPoll();setInterval(poll,1500);setInterval(netPoll,5000);
+renderMusic();poll();netPoll();setInterval(()=>{if(document.hidden||$('drawer').classList.contains('open'))return;poll()},2500);setInterval(netPoll,5000);
 setTimeout(()=>{if(media.radio.list.length<2)loadStations()},4000);
 setTimeout(getAllApps,3000);
 if(store.get('lastpos',null)&&!new URLSearchParams(location.search).has('demo'))bootData();

@@ -31,6 +31,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
@@ -53,6 +54,43 @@ class MainActivity : Activity() {
 
     @Volatile
     private var lastController: MediaController? = null
+
+    @Volatile
+    private var appsJson: String? = null
+
+    @Volatile
+    private var nowCache: String = """{"ok":true,"has":false}"""
+    @Volatile private var uiVisible = false
+    @Volatile private var pollerOn = false
+    private val bridge by lazy { Bridge() }
+    private var artKey = ""
+    private var artType = ""
+    private var artUrlCache = ""
+
+    private fun startPoller() {
+        if (pollerOn) return
+        pollerOn = true
+        Thread {
+            while (pollerOn) {
+                try {
+                    if (uiVisible) nowCache = bridge.computeNow()
+                } catch (e: Exception) {
+                }
+                try { Thread.sleep(2000) } catch (e: InterruptedException) { }
+            }
+        }.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        uiVisible = true
+        startPoller()
+    }
+
+    override fun onPause() {
+        uiVisible = false
+        super.onPause()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,6 +115,8 @@ class MainActivity : Activity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
+            // many Malaysian radio streams are plain http
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             setGeolocationEnabled(true)
             allowFileAccess = false
         }
@@ -84,7 +124,12 @@ class MainActivity : Activity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
                 view: WebView, request: WebResourceRequest
-            ): WebResourceResponse? = loader.shouldInterceptRequest(request.url)
+            ): WebResourceResponse? {
+                val u = request.url
+                val path = u.path ?: ""
+                if (path.startsWith("/appicon/")) return appIcon(path.removePrefix("/appicon/").removeSuffix(".png"))
+                return loader.shouldInterceptRequest(u)
+            }
 
             override fun shouldOverrideUrlLoading(
                 view: WebView, request: WebResourceRequest
@@ -117,7 +162,7 @@ class MainActivity : Activity() {
             }
         }
 
-        web.addJavascriptInterface(Bridge(), "NoorNative")
+        web.addJavascriptInterface(bridge, "NoorNative")
     }
 
     // ---------------------------------------------------------------------------------------
@@ -225,6 +270,39 @@ class MainActivity : Activity() {
             return arr.toString()
         }
 
+        /** Builds the app list (with icons) on a background thread so the screen never freezes. */
+        @JavascriptInterface
+        fun requestApps() {
+            val cached = appsJson
+            if (cached != null) {
+                pushToJs("window.__appsDone&&window.__appsDone(${JSONObject.quote(cached)})")
+                return
+            }
+            Thread {
+                var out = "[]"
+                try {
+                    val pm = packageManager
+                    val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                    val arr = JSONArray()
+                    val named = pm.queryIntentActivities(main, 0)
+                        .filter { it.activityInfo.packageName != packageName }
+                        .map { Pair(it.loadLabel(pm).toString(), it.activityInfo.packageName) }
+                        .sortedBy { it.first.lowercase() }
+                    // names only: icons are loaded one by one when they scroll into view
+                    for ((name, pkg) in named) {
+                        val o = JSONObject()
+                        o.put("n", name)
+                        o.put("p", pkg)
+                        arr.put(o)
+                    }
+                    out = arr.toString()
+                    appsJson = out
+                } catch (e: Exception) {
+                }
+                pushToJs("window.__appsDone&&window.__appsDone(${JSONObject.quote(out)})")
+            }.start()
+        }
+
         /** Wi-Fi / Bluetooth tethering / mobile data, and whether the internet really works. */
         @JavascriptInterface
         fun netInfo(): String {
@@ -284,8 +362,11 @@ class MainActivity : Activity() {
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
         )
 
+        /** Instant: returns the last result made by the background thread (never blocks the screen). */
         @JavascriptInterface
-        fun nowPlaying(): String {
+        fun nowPlaying(): String = nowCache
+
+        fun computeNow(): String {
             val o = JSONObject()
             if (!hasNotifAccess()) {
                 o.put("ok", false)
@@ -329,8 +410,13 @@ class MainActivity : Activity() {
                 o.put("pos", pos)
                 o.put("playing", playing)
                 o.put("key", "${c.packageName}|$title|$artist")
-                if (md != null && bitmapFrom(md) != null) {
+                val key = "${c.packageName}|$title|$artist"
+                if (key == artKey) {
+                    o.put("art", artType)
+                    if (artType == "url") o.put("artUrl", artUrlCache)
+                } else if (md != null && bitmapFrom(md) != null) {
                     o.put("art", "bmp")
+                    artKey = key; artType = "bmp"
                 } else {
                     val u = if (md != null) artUriFrom(md) else null
                     if (u != null && u.startsWith("https://")) {
@@ -341,6 +427,7 @@ class MainActivity : Activity() {
                     } else {
                         o.put("art", "")
                     }
+                    artKey = key; artType = o.optString("art", ""); artUrlCache = o.optString("artUrl", "")
                 }
             } catch (e: SecurityException) {
                 o.put("ok", false)
@@ -406,6 +493,30 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
             }
+        }
+    }
+
+    private val iconCache = HashMap<String, ByteArray>()
+
+    /** One app icon as a small PNG, made when the page asks for it. */
+    private fun appIcon(pkg: String): WebResourceResponse? {
+        return try {
+            val bytes = synchronized(iconCache) { iconCache[pkg] } ?: run {
+                val d = packageManager.getApplicationIcon(pkg)
+                val size = 64
+                val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                d.setBounds(0, 0, size, size)
+                d.draw(Canvas(bmp))
+                val out = ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.PNG, 90, out)
+                bmp.recycle()
+                val b = out.toByteArray()
+                synchronized(iconCache) { iconCache[pkg] = b }
+                b
+            }
+            WebResourceResponse("image/png", null, bytes.inputStream())
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -484,6 +595,7 @@ class MainActivity : Activity() {
 
     // Do NOT pause the WebView, so music keeps playing in the background.
     override fun onDestroy() {
+        pollerOn = false
         web.destroy()
         super.onDestroy()
     }
