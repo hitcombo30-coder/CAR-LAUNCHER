@@ -21,6 +21,8 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
@@ -63,6 +65,13 @@ class MainActivity : Activity() {
     @Volatile private var uiVisible = false
     @Volatile private var pollerOn = false
     private val bridge by lazy { Bridge() }
+    @Volatile private var wake = false
+    private var watched: MediaController? = null
+    private val sessionCb = object : MediaController.Callback() {
+        override fun onMetadataChanged(metadata: MediaMetadata?) { wake = true }
+        override fun onPlaybackStateChanged(state: PlaybackState?) { wake = true }
+        override fun onSessionDestroyed() { wake = true }
+    }
     private var artKey = ""
     private var artType = ""
     private var artUrlCache = ""
@@ -74,9 +83,13 @@ class MainActivity : Activity() {
             while (pollerOn) {
                 try {
                     if (uiVisible) nowCache = bridge.computeNow()
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                 }
-                try { Thread.sleep(2000) } catch (e: InterruptedException) { }
+                try {
+                    var i = 0
+                    while (i < 8 && !wake) { Thread.sleep(200); i++ }
+                    wake = false
+                } catch (e: InterruptedException) { }
             }
         }.start()
     }
@@ -84,6 +97,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         uiVisible = true
+        wake = true
         startPoller()
     }
 
@@ -327,7 +341,7 @@ class MainActivity : Activity() {
         /** Async GET for the official JAKIM prayer-time server (no browser CORS limits here). */
         @JavascriptInterface
         fun fetchNative(id: String, url: String) {
-            if (!url.startsWith("https://www.e-solat.gov.my/")) {
+            if (!url.startsWith("https://www.e-solat.gov.my/") && !url.startsWith("https://lrclib.net/")) {
                 pushToJs("window.__natDone&&window.__natDone(${JSONObject.quote(id)},false,\"blocked\")")
                 return
             }
@@ -348,10 +362,32 @@ class MainActivity : Activity() {
             }.start()
         }
 
+        /** Dims only this app's window (-1 = back to the system brightness). */
+        @JavascriptInterface
+        fun setBrightness(f: Float) {
+            runOnUiThread {
+                try {
+                    val lp = window.attributes
+                    lp.screenBrightness = if (f < 0f) -1f else f.coerceIn(0.05f, 1f)
+                    window.attributes = lp
+                } catch (e: Exception) {
+                }
+            }
+        }
+
+        /** Offline: use saved map tiles instead of waiting for the network. */
+        @JavascriptInterface
+        fun setOffline(on: Boolean) {
+            runOnUiThread {
+                web.settings.cacheMode =
+                    if (on) WebSettings.LOAD_CACHE_ELSE_NETWORK else WebSettings.LOAD_DEFAULT
+            }
+        }
+
         // ----- Now Playing (other apps) -----
 
         @JavascriptInterface
-        fun hasNotifAccess(): Boolean = hasNotifAccess()
+        fun hasNotifAccess(): Boolean = this@MainActivity.hasNotifAccess()
 
         @JavascriptInterface
         fun openNotifSettings(): Boolean =
@@ -368,7 +404,7 @@ class MainActivity : Activity() {
 
         fun computeNow(): String {
             val o = JSONObject()
-            if (!hasNotifAccess()) {
+            if (!this@MainActivity.hasNotifAccess()) {
                 o.put("ok", false)
                 o.put("reason", "access")
                 return o.toString()
@@ -376,6 +412,11 @@ class MainActivity : Activity() {
             try {
                 val c = pickSession()
                 lastController = c
+                if (c != null && watched?.sessionToken != c.sessionToken) {
+                    try { watched?.unregisterCallback(sessionCb) } catch (e: Exception) { }
+                    c.registerCallback(sessionCb, Handler(Looper.getMainLooper()))
+                    watched = c
+                }
                 o.put("ok", true)
                 if (c == null) {
                     o.put("has", false)

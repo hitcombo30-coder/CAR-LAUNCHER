@@ -141,6 +141,13 @@ svg{display:block}
 #search.open{display:flex}
 #qrow{display:flex;gap:10px}
 #results{display:flex;flex-direction:column;gap:8px;max-height:330px;overflow-y:auto}
+#ver{position:absolute;right:22px;bottom:1px;z-index:5;font-size:11px;line-height:14px;color:rgba(191,214,203,.55);pointer-events:none}
+#doa{display:none;position:absolute;left:50%;top:150px;transform:translateX(-50%);width:600px;z-index:1900;padding:20px 26px;border-radius:26px;text-align:center;background:linear-gradient(160deg,rgba(6,30,23,.97),rgba(4,20,16,.97));border:1px solid rgba(233,200,119,.6)}
+#doa.show{display:block}
+#doa .ar{font-family:Amiri,serif;font-size:34px;line-height:56px;color:#F6DF9B;direction:rtl}
+#doa .ms{font-size:17px;line-height:24px;color:#FFF6D8;margin-top:8px}
+#doa .hd{font-size:13px;color:#BFD6CB;margin-top:10px;letter-spacing:1px}
+.row .c{margin-left:auto;font-weight:700;color:#E9C877}
 #toast{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);z-index:2000;padding:12px 22px;border-radius:22px;font-size:16px;font-weight:600;color:#FFF6D8;opacity:0;pointer-events:none;transition:opacity .25s;max-width:700px;text-align:center}
 #toast.show{opacity:1}
 </style>
@@ -193,7 +200,7 @@ svg{display:block}
 <div id="sright">
 <div style="display:flex;align-items:center;gap:14px">
 <div id="hdgbox" class="glassbtn"><svg id="hdgArrow" width="34" height="34" viewBox="0 0 24 24" fill="#E9C877" stroke="#E9C877" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 L18 20 L12 16 L6 20 Z"/></svg></div>
-<div style="font-size:16px;font-weight:500;line-height:22px;color:#BFD6CB">Heading <b id="hdgText" style="color:#FFF6D8">N 0°</b><br>Trip <b id="tripText" style="color:#FFF6D8">0.0 km</b></div>
+<div id="tripInfo" style="font-size:16px;font-weight:500;line-height:22px;color:#BFD6CB">Heading <b id="hdgText" style="color:#FFF6D8">N 0°</b><br>Trip <b id="tripText" style="color:#FFF6D8">0.0 km</b></div>
 </div>
 <div style="display:flex;gap:12px">
 <button class="chip glassbtn" id="btnMax" aria-label="Max speed. Tap to reset trip"><span class="l">MAX</span><span class="v"><span id="maxv">0</span> <small>km/h</small></span></button>
@@ -278,6 +285,8 @@ svg{display:block}
 <div id="qrow"><input class="inp" id="q" type="text" placeholder="Search destination…" autocomplete="off" spellcheck="false"><button class="goldbtn gobtn" id="qgo">Search</button><button class="glassbtn" id="qclose" style="width:52px;height:52px;border-radius:26px" aria-label="Close search"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
 <div id="results"></div>
 </div>
+<div id="ver"></div>
+<div id="doa" aria-live="polite"><div class="ar">سُبْحَانَ الَّذِي سَخَّرَ لَنَا هَذَا وَمَا كُنَّا لَهُ مُقْرِنِينَ وَإِنَّا إِلَى رَبِّنَا لَمُنْقَلِبُونَ</div><div class="ms">Maha Suci Allah yang telah menundukkan kenderaan ini untuk kami, sedangkan kami sebelumnya tidak mampu menguasainya, dan sesungguhnya kepada Tuhan kami, kami akan kembali.</div><div class="hd">Doa menaiki kenderaan · ketik untuk tutup</div></div>
 <div id="toast" class="glass dark"></div>
 </section>
 </div>
@@ -440,6 +449,10 @@ function updatePrayerText(){
 
 /* ---------- speed / trip ---------- */
 const trip={dist:0,mov:0,max:0};
+/* daily totals for the trip history (kept for 30 days, saved on the device only) */
+let trips=store.get('trips',{}),tripDirty=false;
+function dayAdd(dm,kmh,dt){const k=new Date().toLocaleDateString('en-CA');const r=trips[k]||(trips[k]={d:0,mx:0,mv:0});r.d+=dm;r.mv+=dt;if(kmh>r.mx&&kmh<300)r.mx=kmh;tripDirty=true}
+function saveTrips(){if(!tripDirty)return;tripDirty=false;const ks=Object.keys(trips).sort();while(ks.length>30)delete trips[ks.shift()];store.set('trips',trips)}
 let lastP=null;
 function dir8(h){return['N','NE','E','SE','S','SW','W','NW'][Math.round(h/45)%8]}
 function showSpeed(k){$('speed').textContent=Math.round(k);$('gfill').setAttribute('stroke-dasharray',`${Math.max(.01,Math.min(k/200,1)*100)} 100`)}
@@ -460,14 +473,15 @@ function onPos(p){
  let kmh=(v||0)*3.6;if(kmh<5)kmh=0;
  if(lastP){
   const dt=t-lastP.t,dm=hav(lastP.lat,lastP.lon,lat,lon);
-  if(dm>4&&(c.accuracy||0)<60&&dt<30000)trip.dist+=dm;
-  if(kmh>0&&dt<30000)trip.mov+=dt;
+  if(dm>4&&(c.accuracy||0)<60&&dt<30000){trip.dist+=dm;dayAdd(dm,0,0)}
+  if(kmh>0&&dt<30000){trip.mov+=dt;dayAdd(0,kmh,dt)}
  }
  if(kmh>trip.max&&kmh<300)trip.max=kmh;
  if(c.heading!=null&&!isNaN(c.heading)&&kmh>5)hdg=c.heading;
  lastP={lat,lon,t};
  const first=!hasFix;pos={lat,lon};hasFix=true;
- if(t-lastSave>10000){lastSave=t;store.set('lastpos',{lat,lon});followPrayer()}
+ if(t-lastSave>10000){lastSave=t;store.set('lastpos',{lat,lon});saveTrips();followPrayer()}
+ if(kmh>=10)maybeDoa();
  showSpeed(kmh);showStats();moveCar();
  if(first){const far=bootPos&&hav(bootPos.lat,bootPos.lon,lat,lon)>15000;if(!booted||far){booted=false;bootData()}else geoName(true);idleCard()}else geoName(false);
  navTick();
@@ -496,7 +510,8 @@ function isNight(){
  if(prayers&&prayers.length>3)return n<prayers[0].x||n>=prayers[3].x;
  const h=n.getHours();return h>=19||h<6;
 }
-function applyNight(){document.body.classList.toggle('night',isNight());applyTint()}
+function applyNight(){const n=isNight();document.body.classList.toggle('night',n);applyTint();
+ try{if(window.NoorNative&&NoorNative.setBrightness)NoorNative.setBrightness(store.get('abr',true)&&n?0.45:-1)}catch(e){}}
 function setLayer(id,notify){
  if(!LAYERS[id])id='street';
  curTiles.forEach(l=>map.removeLayer(l));
@@ -697,7 +712,7 @@ function renderMusic(){
  sub.classList.remove('hint');
  if(v==='ext'){
   $('title').textContent=ext.title||ext.app;
-  sub.textContent=[ext.artist,ext.album].filter(Boolean).join(' · ')||ext.app;
+  sub.textContent=lyrLine?'♪ '+lyrLine:([ext.artist,ext.album].filter(Boolean).join(' · ')||ext.app);
   setIcon(ext.playing);
   if(ext.dur>0){$('barfill').style.width=Math.min(ext.pos/ext.dur,1)*100+'%';$('tc').textContent=mmss(ext.pos/1000);$('td').textContent=mmss(ext.dur/1000)}
   else{$('barfill').style.width='100%';$('tc').textContent='LIVE';$('td').textContent=''}
@@ -761,14 +776,69 @@ function poll(){
  if(playing&&!extWasPlaying){pref='ext';store.set('pref','ext')}
  if(playing&&media.playing)audio.pause();
  extWasPlaying=playing;
+ if(ext){lyr.p0=ext.pos;lyr.t0=performance.now()}
  if(ext&&ext.key!==extKey){
-  extKey=ext.key;extArt='';
+  extKey=ext.key;extArt='';lyrLine='';
+  if(GAPP[ext.pkg]!=='yt'&&ext.title)loadLyrics(ext.key,ext.title,ext.artist,ext.dur);else lyr={key:ext.key,lines:null,p0:0,t0:0,idx:0};
   if(ext.art==='bmp'){try{extArt=NoorNative.nowArt(ext.key)||''}catch(e){}}
   else if(ext.art==='url'&&NoorNative.fetchArt)NoorNative.fetchArt(ext.key,ext.artUrl);
  }
  renderMusic();
 }
 window.__artDone=(k,b64)=>{if(k===extKey&&b64){extArt=b64;renderMusic()}};
+
+
+const VER='1.7',VDATE='26 Nov 2026';
+$('ver').textContent='Noor Drive v'+VER+' · '+VDATE;
+/* ---------- lyrics (LRCLIB). Only when online; the line is shown where the artist name normally is ---------- */
+let lyr={key:'',lines:null,p0:0,t0:0,idx:0},lyrLine='';
+function parseLrc(t){const o=[];String(t||'').split('\n').forEach(l=>{const m=/^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/.exec(l);if(m&&m[3].trim())o.push([+m[1]*60+(+m[2]),m[3].trim()])});return o}
+async function loadLyrics(key,title,artist,durMs){
+ lyr={key,lines:null,p0:0,t0:0,idx:0};lyrLine='';
+ if(!store.get('lyrics',true)||!window.NoorNative||!NoorNative.fetchNative)return;
+ const clean=title.replace(/\s*[\(\[].*?[\)\]]/g,'').replace(/\s*-\s*(official|lyrics?|audio|video).*$/i,'').trim();
+ const q=a=>'https://lrclib.net/api/'+a;
+ let rec=null;
+ try{rec=JSON.parse(await natFetch(q('get?track_name='+encodeURIComponent(clean)+'&artist_name='+encodeURIComponent(artist||'')+(durMs>0?'&duration='+Math.round(durMs/1000):''))))}catch(e){}
+ if(!rec||!rec.syncedLyrics){try{const a=JSON.parse(await natFetch(q('search?q='+encodeURIComponent((artist?artist+' ':'')+clean))));rec=(a||[]).find(x=>x.syncedLyrics)||null}catch(e){}}
+ if(key!==lyr.key)return;
+ const L=rec&&rec.syncedLyrics?parseLrc(rec.syncedLyrics):[];
+ if(L.length>3)lyr.lines=L;
+}
+setInterval(()=>{
+ if(!lyr.lines||!ext||!ext.playing||view()!=='ext'){if(lyrLine){lyrLine='';rmSig='';renderMusic()}return}
+ const now=lyr.p0/1000+(performance.now()-lyr.t0)/1000+0.3,L=lyr.lines;
+ let i=lyr.idx;if(i>=L.length||L[i][0]>now)i=0;
+ while(i+1<L.length&&L[i+1][0]<=now)i++;
+ lyr.idx=i;
+ const t=L[i][0]<=now?L[i][1]:'';
+ if(t!==lyrLine){lyrLine=t;$('sub').textContent=t?'♪ '+t:[ext.artist,ext.album].filter(Boolean).join(' · ')||ext.app}
+},500);
+
+/* ---------- doa menaiki kenderaan: shown once when you start moving (at most every 30 min) ---------- */
+let doaTimer=0;
+function maybeDoa(){
+ if(!store.get('doa',true))return;
+ const t=Date.now();if(t-store.get('doaAt',0)<1800000)return;
+ store.set('doaAt',t);showDoa();
+}
+function showDoa(){$('doa').classList.add('show');clearTimeout(doaTimer);doaTimer=setTimeout(hideDoa,18000)}
+function hideDoa(){$('doa').classList.remove('show')}
+$('doa').onclick=hideDoa;
+
+/* ---------- save map area: warms the browser cache with a few hundred tiles so the map still works with weak internet ---------- */
+let saving=false;
+function saveMapArea(){
+ if(saving||!curTiles.length)return;
+ const lay=curTiles[0],z0=[14,15,16],rad={14:1,15:2,16:4},urls=[];
+ z0.forEach(z=>{const n=2**z,x=Math.floor((pos.lon+180)/360*n),la=pos.lat*Math.PI/180,y=Math.floor((1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n);
+  for(let dx=-rad[z];dx<=rad[z];dx++)for(let dy=-rad[z];dy<=rad[z];dy++)urls.push(lay.getTileUrl({x:x+dx,y:y+dy,z}))});
+ saving=true;let i=0,done=0;toast('Saving map area… '+urls.length+' tiles');
+ const next=()=>{if(i>=urls.length){if(done>=urls.length-2){saving=false;toast('Map area saved ('+curLayer+')')}return}
+  const im=new Image();im.onload=im.onerror=()=>{done++;if(done>=urls.length){saving=false;toast('Map area saved')}else setTimeout(next,60)};im.src=urls[i++]};
+ for(let k=0;k<3;k++)setTimeout(next,k*80);
+ setTimeout(()=>{saving=false},120000);
+}
 
 /* transport */
 function playPause(){
@@ -838,6 +908,7 @@ function netPoll(){
   else{ok=navigator.onLine;t=ok?'wifi':'none'}
  }catch(e){}
  $('net').className=t==='none'?'off':(ok?'':'bad');
+ try{if(window.NoorNative&&NoorNative.setOffline)NoorNative.setOffline(t==='none'||!ok)}catch(e){}
  $('netIcon').innerHTML=NETI[t]||NETI.wifi;
  $('netTxt').textContent=(NETL[t]||'Online')+(t!=='none'&&!ok?' · no internet':'');
 }
@@ -873,7 +944,13 @@ let dMode=null;
 function openDrawer(m){dMode=m;$('drawer').classList.add('open');renderDrawer();if(m==='radio'&&media.radio.list.length<2)loadStations()}
 function closeDrawer(){dMode=null;$('drawer').classList.remove('open');$('dq').blur()}
 $('dclose').onclick=closeDrawer;
-$('btnApps').onclick=()=>openDrawer('apps');
+(function(){
+ const b=$('btnApps');let t=0,lp=false;
+ b.addEventListener('pointerdown',()=>{lp=false;t=setTimeout(()=>{lp=true;openDrawer('tools')},700)});
+ ['pointerup','pointerleave','pointercancel'].forEach(e=>b.addEventListener(e,()=>clearTimeout(t)));
+ b.addEventListener('click',()=>{if(lp){lp=false;return}openDrawer('apps')});
+})();
+$('tripInfo').onclick=()=>openDrawer('trips');
 const appTile=a=>`<button class="tile glassbtn" data-pkg="${esc(a.p)}"><img src="/appicon/${encodeURIComponent(a.p)}.png" loading="lazy" decoding="async" width="56" height="56" alt=""><span>${esc(a.n)}</span></button>`;
 function renderDrawer(){
  if(!dMode)return;
@@ -908,6 +985,24 @@ function renderDrawer(){
 <button class="row glassbtn" data-act="notif"><span class="a">Notification access</span><span class="b">Switch on Noor Drive</span></button>`;
   return;
  }
+ if(dMode==='tools'){
+  $('dtitle').textContent='Tools · v'+VER;tools.style.display='none';L.className='';
+  const on=k=>store.get(k,true)?'ON':'OFF';
+  const row=(id,a,b,c)=>`<button class="row glassbtn" data-tool="${id}"><span class="a">${a}</span><span class="b">${b}</span>${c?`<span class="c">${c}</span>`:''}</button>`;
+  L.innerHTML=row('trips','Trip history','Distance, top speed and average per day')
+   +row('abr','Auto brightness at night','Dims this screen after Maghrib',on('abr'))
+   +row('doa','Doa menaiki kenderaan','Shown when you start driving',on('doa'))
+   +row('lyrics','Lyrics','Needs internet. For YouTube Music and other music apps',on('lyrics'))
+   +row('cache','Save map area','Keeps the map around you for weak internet')
+   +row('fx','Glass blur (heavy)','Looks nicer, slower on this head unit',document.body.classList.contains('fx')?'ON':'OFF');
+  return;
+ }
+ if(dMode==='trips'){
+  $('dtitle').textContent='Trip history';tools.style.display='none';L.className='';
+  const ks=Object.keys(trips).sort().reverse().filter(k=>trips[k].d>50);
+  L.innerHTML=ks.length?ks.map(k=>{const r=trips[k],km=r.d/1000,avg=r.mv>0?km/(r.mv/3.6e6):0,m=Math.round(r.mv/60000);return `<div class="row"><span class="a">${esc(k)}</span><span class="b">${km.toFixed(1)} km · max ${Math.round(r.mx)} · avg ${Math.round(avg)} km/h · ${Math.floor(m/60)}h ${m%60}m driving</span></div>`}).join(''):'<div class="empty">No trips yet. Drive a little and they appear here.</div>';
+  return;
+ }
  if(dMode==='zone'){
   $('dtitle').textContent='Prayer zone';tools.style.display='none';L.className='';
   const cur=store.get('zone',null);
@@ -930,6 +1025,16 @@ $('dlist').addEventListener('click',e=>{
   let ok=false;try{ok=t.dataset.act==='notif'?NoorNative.openNotifSettings():NoorNative.openAppSettings()}catch(x){}
   if(!ok)toast('Could not open that screen. Open Android Settings > Apps > Special access > Notification access.');
   return;
+ }
+ if(t.dataset.tool){
+  const id=t.dataset.tool;
+  if(id==='trips'){openDrawer('trips');return}
+  if(id==='cache'){closeDrawer();saveMapArea();return}
+  if(id==='fx'){document.body.classList.toggle('fx');store.set('fx',document.body.classList.contains('fx'));renderDrawer();return}
+  const v=!store.get(id,true);store.set(id,v);
+  if(id==='abr')applyNight();
+  if(id==='doa'&&v)showDoa();
+  renderDrawer();return;
  }
  if(t.dataset.zone!=null){store.set('zone',t.dataset.zone||null);closeDrawer();pLast=0;loadPrayer();return}
 });

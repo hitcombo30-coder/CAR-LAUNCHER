@@ -27,3 +27,7 @@ One-time setup: tap the line "Tap here to show what YouTube is playing" in the m
 ## Prayer times
 Official JAKIM e-Solat times for the zone nearest to your GPS position. They switch zone by themselves as you drive.
 Hold your finger on the prayer line to pick a zone manually (or go back to Automatic).
+
+## Tools menu
+Hold your finger on the APPS button: trip history, auto brightness, doa, lyrics, save map area, glass blur.
+Tap the Heading/Trip text to open trip history.
